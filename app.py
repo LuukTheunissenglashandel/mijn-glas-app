@@ -5,24 +5,26 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-# Let op: 'Selecteer' voegen we later toe voor de vinkjes
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad")
 
-# --- CSS: Layout & Kleuren ---
+# --- CSS: Strakke Layout voor Tablet ---
 st.markdown("""
     <style>
+    /* Minimale witruimte bovenin */
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
+    
+    /* Verberg menu's voor clean look */
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
     
-    /* Gekleurde knoppen */
-    div.stButton > button[key="real_del_btn"] { background-color: #28a745; color: white; border-radius: 5px; height: 50px; width: 100%; }
-    div.stButton > button[key="cancel_del_btn"] { background-color: #dc3545; color: white; border-radius: 5px; height: 50px; width: 100%; }
+    /* Gekleurde knoppen: JA (Groen) en NEE (Rood) */
+    div.stButton > button[key="real_del_btn"] { background-color: #28a745; color: white; border-radius: 8px; height: 50px; width: 100%; font-weight: bold;}
+    div.stButton > button[key="cancel_del_btn"] { background-color: #dc3545; color: white; border-radius: 8px; height: 50px; width: 100%; font-weight: bold;}
     
-    /* Zorg dat de tabel goed scrollt op mobiel */
-    [data-testid="stDataFrameResizable"] { width: 100%; }
+    /* Zorg dat selectievakjes groot genoeg zijn op touchscreens */
+    input[type=checkbox] { transform: scale(1.5); }
     </style>
     """, unsafe_allow_html=True)
 
@@ -59,13 +61,11 @@ def laad_data():
         if col in df.columns:
             df[col] = df[col].apply(clean_int)
             
-    # Zorg dat we strings hebben (geen rekenfouten)
     return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
 
 def sla_data_op(df):
-    """Slaat data op ZONDER de vinkjes-kolom"""
     conn = get_connection()
-    # We filteren de 'Selecteer' kolom eruit voordat we naar Google sturen
+    # Filter de 'Selecteer' kolom eruit voor Google
     save_df = df.copy()
     if "Selecteer" in save_df.columns:
         save_df = save_df.drop(columns=["Selecteer"])
@@ -93,11 +93,12 @@ if not st.session_state.ingelogd:
 # --- MAIN APP ---
 st.title("🏭 Glas Voorraad")
 
-# 1. Data Laden
+# 1. Data Laden (Sessie state voor snelheid)
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
-    # Voeg vinkjes-kolom toe in het geheugen (niet in Google)
-    st.session_state.mijn_data.insert(0, "Selecteer", False)
+    # Voeg vinkjes-kolom toe in het geheugen
+    if "Selecteer" not in st.session_state.mijn_data.columns:
+        st.session_state.mijn_data.insert(0, "Selecteer", False)
 
 df = st.session_state.mijn_data
 
@@ -123,62 +124,76 @@ with st.sidebar:
                     if c not in nieuwe_data.columns: nieuwe_data[c] = ""
                 
                 final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
-                # Voeg samen en herlaad
+                
+                # Samenvoegen met wat er in de cloud staat
                 huidig_uit_cloud = laad_data()
                 totaal = pd.concat([huidig_uit_cloud, final_upload], ignore_index=True)
                 sla_data_op(totaal)
-                st.session_state.mijn_data = None # Forceer herladen
+                
+                # Reset sessie om te herladen
+                del st.session_state.mijn_data
                 st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
 
-# 3. Zoekbalk & Knoppen
+# 3. Zoekbalk
 col_search, col_buttons = st.columns([3, 1])
 with col_search:
-    zoekterm = st.text_input("🔍", placeholder="Zoek op order, afmeting...", label_visibility="collapsed")
+    zoekterm = st.text_input("🔍", placeholder="Typ order, maat of locatie...", label_visibility="collapsed")
 btn_place = col_buttons.empty()
 
-# Filter logic voor zoeken
+# Filter logic
 view_df = df.copy()
 if zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# 4. DE TABEL (Nieuw: st.data_editor)
+# 4. DE TABEL (Geoptimaliseerd voor Samsung Tablet)
 edited_df = st.data_editor(
     view_df,
     column_config={
         "Selecteer": st.column_config.CheckboxColumn(
             "🗑️",
-            help="Vink aan om te verwijderen",
+            help="Aanvinken om te verwijderen",
             default=False,
-            width="small"
+            width="small" # Smalle kolom voor vinkje
         ),
-        "Locatie": st.column_config.TextColumn("Locatie", width="medium"),
+        "Locatie": st.column_config.TextColumn(
+            "Locatie", 
+            width="small", # HIER AANGEPAST: Smalle kolom voor locatie
+            help="Dubbelklik om te wijzigen"
+        ),
         "Aantal": st.column_config.TextColumn("Aantal", width="small"),
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
-        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="large"),
+        
+        # HIER AANGEPAST: Omschrijving krijgt de ruimte
+        "Omschrijving": st.column_config.TextColumn(
+            "Omschrijving", 
+            width="large" 
+        ),
         "Order": st.column_config.TextColumn("Order", width="medium"),
-        "ID": None # Verberg ID
+        "ID": None
     },
-    disabled=["ID"], # ID mag je niet aanpassen
+    disabled=["ID"], 
     hide_index=True,
-    num_rows="fixed", # Geen lege regels onderaan toevoegen
-    height=600,
+    num_rows="fixed",
+    height=750, # Lekker hoog voor tablet scherm
+    use_container_width=True, # DIT ZORGT VOOR HET MEEDRAAIEN (Responsive)
     key="editor"
 )
 
-# 5. Opslaan Logica (Automatisch bij wijziging)
-# We checken of er inhoudelijke wijzigingen zijn (niet de vinkjes)
+# 5. Opslaan Logica
 if not edited_df.drop(columns=["Selecteer"]).equals(df.loc[edited_df.index].drop(columns=["Selecteer"])):
-    # Update de hoofdbron met de edits
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
 
 # 6. Verwijder Logica
-geselecteerd = edited_df[edited_df["Selecteer"] == True]
+try:
+    geselecteerd = edited_df[edited_df["Selecteer"] == True]
+except:
+    geselecteerd = []
 
 if len(geselecteerd) > 0:
     with btn_place.container():
@@ -191,7 +206,6 @@ if len(geselecteerd) > 0:
             with c1:
                 if st.button("JA", key="real_del_btn"):
                     ids_weg = geselecteerd["ID"].tolist()
-                    # Filter uit de sessie data
                     st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
                     sla_data_op(st.session_state.mijn_data)
                     st.session_state.ask_del = False
