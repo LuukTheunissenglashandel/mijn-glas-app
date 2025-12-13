@@ -7,24 +7,89 @@ from streamlit_gsheets import GSheetsConnection
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-st.set_page_config(layout="wide", page_title="Glas Voorraad")
+st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="collapsed")
 
-# --- CSS: Layout & Styling ---
+# --- CSS: MODERN DESIGN & TABLET OPTIMALISATIE ---
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 5rem; }
+    /* 1. Algemene Layout */
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 5rem;
+        max_width: 100%;
+    }
+    
+    /* Verberg standaard Streamlit elementen */
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
-    
-    /* Gekleurde knoppen */
-    div.stButton > button[key="real_del_btn"] { background-color: #28a745; color: white; border-radius: 8px; height: 50px; width: 100%; font-weight: bold;}
-    div.stButton > button[key="cancel_del_btn"] { background-color: #dc3545; color: white; border-radius: 8px; height: 50px; width: 100%; font-weight: bold;}
-    
-    /* Zoek en Wis knoppen styling */
-    div.stButton > button[key="search_btn"] { border-radius: 5px; height: 42px; width: 100%; }
-    div.stButton > button[key="clear_btn"] { background-color: #f0f2f6; border-radius: 5px; height: 42px; width: 100%; color: #ff4b4b; border: 1px solid #ff4b4b;}
 
-    input[type=checkbox] { transform: scale(1.5); }
+    /* 2. Dashboard Cards (Statistieken) */
+    div[data-testid="stMetric"] {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 10px;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+
+    /* 3. Zoekbalk Container */
+    .zoek-container {
+        background-color: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
+        border: 1px solid #eee;
+    }
+
+    /* 4. Knoppen Styling */
+    /* Primaire Actie (Zoeken, Uploaden, Ja) */
+    div.stButton > button[key="search_btn"], 
+    div.stButton > button[key="real_del_btn"],
+    div.stButton > button[key="upload_btn"] { 
+        background-color: #0056b3; /* Professioneel Blauw */
+        color: white; 
+        border-radius: 6px; 
+        height: 45px; 
+        width: 100%; 
+        border: none;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    div.stButton > button[key="search_btn"]:hover { background-color: #004494; }
+
+    /* Secundaire Actie (Wissen, Nee) */
+    div.stButton > button[key="clear_btn"],
+    div.stButton > button[key="cancel_del_btn"] { 
+        background-color: #ffffff; 
+        color: #dc3545; 
+        border: 1px solid #dc3545; 
+        border-radius: 6px; 
+        height: 45px; 
+        width: 100%;
+        font-weight: 500;
+    }
+    div.stButton > button[key="clear_btn"]:hover { background-color: #fff5f5; }
+
+    /* Verwijder knop (onderaan) */
+    div.stButton > button[key="main_delete_btn"] {
+        background-color: #dc3545;
+        color: white;
+        border-radius: 6px;
+        height: 48px;
+        width: 100%;
+        font-weight: bold;
+        box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
+    }
+
+    /* 5. Tabel & Tablet Optimalisatie */
+    /* Vinkjes groter maken voor touch */
+    input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
+    
+    /* Tabel tekst iets groter en luchtiger */
+    [data-testid="stDataFrameResizable"] {
+        font-size: 16px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -71,7 +136,6 @@ def sla_data_op(df):
     st.cache_data.clear()
 
 def clear_search():
-    """Callback om zoekveld leeg te maken"""
     st.session_state.zoek_input = ""
 
 # --- AUTH ---
@@ -81,19 +145,19 @@ if "ingelogd" not in st.session_state:
 if not st.session_state.ingelogd:
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.header("🔒 Inloggen")
-        ww = st.text_input("Wachtwoord", type="password")
-        if st.button("Starten"):
+        st.markdown("### 🔒 Glas Voorraad Systeem")
+        ww = st.text_input("Voer wachtwoord in", type="password")
+        if st.button("Inloggen"):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
                 st.rerun()
             else:
-                st.error("Fout wachtwoord")
+                st.error("Ongeldig wachtwoord")
     st.stop()
 
 # --- MAIN APP ---
-st.title("🏭 Glas Voorraad")
 
+# 1. Data Laden
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
     if "Selecteer" not in st.session_state.mijn_data.columns:
@@ -101,12 +165,13 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# 2. Sidebar Import
+# 2. Sidebar (Import)
 with st.sidebar:
-    st.header("📥 Import")
-    uploaded_file = st.file_uploader("Excel bestand (.xlsx)", type=["xlsx"])
+    st.markdown("### 📥 Excel Import")
+    uploaded_file = st.file_uploader("Sleep bestand hierheen", type=["xlsx"])
     if uploaded_file:
-        if st.button("Bevestig Upload"):
+        st.write("---")
+        if st.button("📤 Upload naar Cloud", key="upload_btn"):
             try:
                 nieuwe_data = pd.read_excel(uploaded_file)
                 nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
@@ -127,28 +192,43 @@ with st.sidebar:
                 totaal = pd.concat([huidig_uit_cloud, final_upload], ignore_index=True)
                 sla_data_op(totaal)
                 del st.session_state.mijn_data
+                st.success("Succesvol geüpload!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
 
-# 3. Zoekbalk Sectie (AANGEPAST)
-# We gebruiken kolommen om Input, Zoekknop en Wisknop naast elkaar te zetten
-col_input, col_zoek, col_wis = st.columns([5, 1, 1], gap="small")
+# 3. HEADER & STATISTIEKEN (KPI's)
+c_title, c_stats1, c_stats2 = st.columns([2, 1, 1])
+with c_title:
+    st.title("🏭 Glas Voorraad")
+with c_stats1:
+    # Bereken totaal aantal (som van kolom Aantal, veilig geconverteerd)
+    try:
+        totaal_glas = df["Aantal"].replace('', '0').astype(int).sum()
+    except:
+        totaal_glas = 0
+    st.metric("Totaal Ruiten", f"{totaal_glas} stuks")
+with c_stats2:
+    st.metric("Unieke Orders", len(df["Order"].unique()))
 
-with col_input:
-    # We koppelen de input aan sessie state 'zoek_input' zodat we hem kunnen wissen
-    zoekterm = st.text_input("🔍", placeholder="Typ order, maat of locatie...", label_visibility="collapsed", key="zoek_input")
+st.write("") # Witregel
 
-with col_zoek:
-    # Deze knop doet technisch niks anders dan de pagina herladen (wat het zoeken triggert), maar is duidelijk voor gebruiker
-    st.button("🔍 Zoek", key="search_btn")
+# 4. ZOEKBALK IN 'CARD' STIJL
+with st.container():
+    # Dit maakt een visueel kader om het zoekgedeelte
+    st.markdown('<div class="zoek-container">', unsafe_allow_html=True)
+    col_input, col_zoek, col_wis = st.columns([5, 1, 1], gap="small", vertical_alignment="bottom")
 
-with col_wis:
-    # Deze knop roept de 'clear_search' functie aan
-    st.button("❌ Wis", on_click=clear_search, key="clear_btn")
+    with col_input:
+        zoekterm = st.text_input("Zoeken", placeholder="🔍 Typ ordernummer, maat of locatie...", label_visibility="visible", key="zoek_input")
 
-# Verwijder knop placeholder
-btn_place = st.empty()
+    with col_zoek:
+        st.button("Zoeken", key="search_btn")
+
+    with col_wis:
+        st.button("Wis", on_click=clear_search, key="clear_btn")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # Filter logic
 view_df = df.copy()
@@ -156,7 +236,7 @@ if zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# 4. TABEL
+# 5. TABEL (MODERN & RESPONSIVE)
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -173,40 +253,40 @@ edited_df = st.data_editor(
     disabled=["ID"], 
     hide_index=True,
     num_rows="fixed",
-    height=750, 
-    use_container_width=False, 
+    height=700, 
+    use_container_width=False, # Zorgt dat horizontaal scrollen werkt op tablet
     key="editor"
 )
 
-# 5. Opslaan Logica
+# 6. OPSLAAN & VERWIJDEREN
 if not edited_df.drop(columns=["Selecteer"]).equals(df.loc[edited_df.index].drop(columns=["Selecteer"])):
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
 
-# 6. Verwijder Logica
 try:
     geselecteerd = edited_df[edited_df["Selecteer"] == True]
 except:
     geselecteerd = []
 
+# Verwijder knop onderaan (zwevend of vast)
 if len(geselecteerd) > 0:
-    with btn_place.container():
-        # Een witregel voor layout
-        st.write("") 
-        if st.button(f"🗑️ Verwijder ({len(geselecteerd)})", type="primary"):
+    st.write("")
+    col_del_L, col_del_R = st.columns([3, 1])
+    with col_del_R:
+        if st.button(f"🗑️ Verwijder {len(geselecteerd)} regels", type="primary", key="main_delete_btn"):
             st.session_state.ask_del = True
             
-        if st.session_state.get('ask_del'):
-            st.warning("Definitief verwijderen?")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("JA", key="real_del_btn"):
-                    ids_weg = geselecteerd["ID"].tolist()
-                    st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
-                    sla_data_op(st.session_state.mijn_data)
-                    st.session_state.ask_del = False
-                    st.rerun()
-            with c2:
-                if st.button("NEE", key="cancel_del_btn"):
-                    st.session_state.ask_del = False
-                    st.rerun()
+    if st.session_state.get('ask_del'):
+        st.warning("Weet je zeker dat je deze regels wilt verwijderen?")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ JA, Verwijderen", key="real_del_btn"):
+                ids_weg = geselecteerd["ID"].tolist()
+                st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
+                sla_data_op(st.session_state.mijn_data)
+                st.session_state.ask_del = False
+                st.rerun()
+        with c2:
+            if st.button("❌ ANNULEER", key="cancel_del_btn"):
+                st.session_state.ask_del = False
+                st.rerun()
