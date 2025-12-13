@@ -7,65 +7,46 @@ from streamlit_gsheets import GSheetsConnection
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="collapsed")
+st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: PRO DESIGN ---
+# --- CSS: DESIGN & LAYOUT ---
 st.markdown("""
     <style>
-    /* Algemene Layout */
-    .block-container {
-        padding-top: 1rem;
-        padding-bottom: 3rem;
-        max_width: 100%;
-    }
-    
-    /* Verberg standaard elementen */
+    /* Algemeen */
+    .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Dashboard Cards */
+    /* Cards & Balken */
     div[data-testid="stMetric"] {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        background-color: #fff; border: 1px solid #e0e0e0; padding: 10px; border-radius: 8px;
     }
-
-    /* Actiebalk Container */
     .actie-balk {
-        background-color: #f8f9fa;
-        padding: 15px;
-        border-radius: 8px;
-        border: 1px solid #dee2e6;
-        margin-bottom: 10px;
+        background-color: #f1f3f4; padding: 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #ddd;
     }
 
-    /* Knoppen Styling */
-    div.stButton > button[key="search_btn"], 
-    div.stButton > button[key="upload_btn"] { 
-        background-color: #0d6efd; color: white; border: none; border-radius: 6px; height: 42px;
-    }
+    /* Knoppen */
+    div.stButton > button { border-radius: 6px; height: 42px; font-weight: 600; border: none; }
     
+    /* Blauw (Zoek/Upload) */
+    div.stButton > button[key="search_btn"], div.stButton > button[key="upload_btn"] { 
+        background-color: #0d6efd; color: white; 
+    }
+    /* Wit/Grijs (Wis) */
     div.stButton > button[key="clear_btn"] { 
-        background-color: #ffffff; color: #6c757d; border: 1px solid #ced4da; border-radius: 6px; height: 42px; 
+        background-color: white; color: #dc3545; border: 1px solid #dc3545; 
     }
-
-    /* Verwijder Knoppen */
-    div.stButton > button[key="header_del_btn"] {
-        background-color: #dc3545; color: white; border: none; border-radius: 6px; height: 42px; font-weight: 600;
+    /* Rood (Verwijder Actie) */
+    div.stButton > button[key="header_del_btn"], div.stButton > button[key="cancel_del_btn"] {
+        background-color: #dc3545; color: white;
     }
-
+    /* Groen (Bevestig) */
     div.stButton > button[key="real_del_btn"] {
-        background-color: #198754; color: white; border: none; border-radius: 6px; height: 42px; font-weight: 600;
-    }
-    
-    div.stButton > button[key="cancel_del_btn"] {
-        background-color: #6c757d; color: white; border: none; border-radius: 6px; height: 42px; font-weight: 600;
+        background-color: #198754; color: white;
     }
 
-    /* Tabel Vinkjes */
-    input[type=checkbox] { transform: scale(1.4); cursor: pointer; }
+    /* Checkbox vergroten */
+    input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -81,7 +62,8 @@ def clean_int(val):
     except:
         return str(val)
 
-def laad_data():
+def laad_data_van_cloud():
+    """Haalt verse data op van Google Sheets"""
     conn = get_connection()
     try:
         df = conn.read(worksheet="Blad1", ttl=0)
@@ -94,16 +76,16 @@ def laad_data():
         df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
     
     for col in DATAKOLOMMEN:
-        if col not in df.columns:
-            df[col] = ""
+        if col not in df.columns: df[col] = ""
 
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
-        if col in df.columns:
-            df[col] = df[col].apply(clean_int)
+        if col in df.columns: df[col] = df[col].apply(clean_int)
             
+    # Return schoon dataframe, nog ZONDER 'Selecteer' kolom
     return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
 
 def sla_data_op(df):
+    """Slaat op naar Google Sheets (filtert eerst de 'Selecteer' kolom eruit)"""
     conn = get_connection()
     save_df = df.copy()
     if "Selecteer" in save_df.columns:
@@ -123,113 +105,116 @@ def bereken_unieke_orders(df):
         return 0
 
 # --- AUTH ---
-if "ingelogd" not in st.session_state:
-    st.session_state.ingelogd = False
+if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 
 if not st.session_state.ingelogd:
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.markdown("<h2 style='text-align: center;'>🔒 Glas Voorraad</h2>", unsafe_allow_html=True)
-        ww = st.text_input("Wachtwoord", type="password", label_visibility="collapsed", placeholder="Wachtwoord...")
-        if st.button("Inloggen", use_container_width=True):
+        st.markdown("<h2 style='text-align: center;'>🔒 Inloggen</h2>", unsafe_allow_html=True)
+        ww = st.text_input("Wachtwoord", type="password", label_visibility="collapsed")
+        if st.button("Starten", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
                 st.rerun()
             else:
-                st.error("Ongeldig wachtwoord")
+                st.error("Fout wachtwoord")
     st.stop()
 
-# --- MAIN APP ---
-
-# 1. Data Laden
+# --- INITIALISATIE DATA ---
+# We laden data 1 keer in de sessie. Daarna werken we met de sessie-kopie.
 if 'mijn_data' not in st.session_state:
-    st.session_state.mijn_data = laad_data()
-    # Zorg dat Selecteer kolom bestaat
-    if "Selecteer" not in st.session_state.mijn_data.columns:
-        st.session_state.mijn_data.insert(0, "Selecteer", False)
+    st.session_state.mijn_data = laad_data_van_cloud()
+    # Voeg Selecteer kolom toe aan sessie data
+    st.session_state.mijn_data.insert(0, "Selecteer", False)
 
 df = st.session_state.mijn_data
 
-# 2. SIDEBAR (IMPORT)
+# --- SIDEBAR (IMPORT) ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
-    uploaded_file = st.file_uploader("Kies .xlsx bestand", type=["xlsx"], label_visibility="collapsed")
+    uploaded_file = st.file_uploader("Sleep bestand hierheen", type=["xlsx"], label_visibility="collapsed")
     
     if uploaded_file:
-        st.info("Bestand gereed")
-        if st.button("📤 Upload naar Cloud", key="upload_btn"):
+        st.info("Bestand herkend!")
+        if st.button("📤 Toevoegen aan voorraad", key="upload_btn"):
             try:
                 nieuwe_data = pd.read_excel(uploaded_file)
+                # Kolommen netjes maken
                 nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
-                
                 mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
                 nieuwe_data = nieuwe_data.rename(columns=mapping)
+                
+                # Data voorbereiden
                 nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
                 if "Locatie" not in nieuwe_data.columns: nieuwe_data["Locatie"] = ""
-
+                
+                # Cijfers opschonen
                 for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
                     if col in nieuwe_data.columns: nieuwe_data[col] = nieuwe_data[col].apply(clean_int)
-
+                
+                # Zorg dat alle kolommen bestaan
                 for c in DATAKOLOMMEN:
                     if c not in nieuwe_data.columns: nieuwe_data[c] = ""
                 
                 final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
-                huidig_uit_cloud = laad_data()
-                totaal = pd.concat([huidig_uit_cloud, final_upload], ignore_index=True)
-                sla_data_op(totaal)
-                del st.session_state.mijn_data
-                st.success("Geüpload!")
-                st.rerun()
+                final_upload.insert(0, "Selecteer", False) # Ook nieuwe regels krijgen vinkje-kolom
+                
+                # 1. Update Sessie (Direct zichtbaar)
+                st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
+                
+                # 2. Update Cloud (Achtergrond)
+                sla_data_op(st.session_state.mijn_data)
+                
+                st.success(f"{len(final_upload)} regels toegevoegd!")
+                st.rerun() # Ververs scherm zodat data zichtbaar is
             except Exception as e:
-                st.error(f"Fout: {e}")
+                st.error(f"Fout tijdens upload: {e}")
+    
     st.markdown("---")
-    if st.button("🔄 Ververs Data"):
+    if st.button("🔄 Data Herladen van Cloud"):
         del st.session_state.mijn_data
         st.rerun()
 
-# 3. HEADER & KPI's
-col_head1, col_head2, col_head3 = st.columns([2, 1, 1])
-with col_head1:
-    st.title("🏭 Glas Voorraad")
-with col_head2:
-    try:
-        total_aantal = df["Aantal"].replace('', '0').astype(int).sum()
-    except:
-        total_aantal = 0
-    st.metric("Totaal Ruiten", total_aantal)
-with col_head3:
-    unieke_orders = bereken_unieke_orders(df)
-    st.metric("Unieke Orders", unieke_orders)
+# --- HEADER & KPI's ---
+c1, c2, c3 = st.columns([2, 1, 1])
+with c1: st.title("🏭 Glas Voorraad")
+with c2: 
+    try: tot = df["Aantal"].replace('', '0').astype(int).sum()
+    except: tot = 0
+    st.metric("Totaal Ruiten", tot)
+with c3: st.metric("Unieke Orders", bereken_unieke_orders(df))
 
-# 4. ACTIEBALK (SLIMME HEADER)
-st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
-
-# Tel selecties
+# --- LOGICA VOOR ACTIEBALK ---
 try:
-    geselecteerd = df[df["Selecteer"] == True]
-    aantal_geselecteerd = len(geselecteerd)
+    # Tel hoeveel vinkjes er op 'True' staan in de sessie data
+    aantal_geselecteerd = len(df[df["Selecteer"] == True])
 except:
     aantal_geselecteerd = 0
 
-# LOGICA: Toon ofwel Verwijder-dialoog, ofwel Zoekbalk
+# --- DE ACTIEBALK ---
+st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
+
 if st.session_state.get('ask_del'):
     # FASE 3: BEVESTIGING
-    st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regel(s) wilt verwijderen?**")
-    c_ja, c_nee = st.columns([1, 1])
-    with c_ja:
-        if st.button("JA, Verwijderen", key="real_del_btn", use_container_width=True):
-            ids_weg = geselecteerd["ID"].tolist()
-            st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
+    st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels wilt verwijderen?**")
+    col_ja, col_nee = st.columns([1, 1])
+    with col_ja:
+        if st.button("✅ JA, Verwijderen", key="real_del_btn", use_container_width=True):
+            ids_weg = df[df["Selecteer"] == True]["ID"].tolist()
+            # Verwijder uit sessie
+            st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
+            # Opslaan naar cloud
             sla_data_op(st.session_state.mijn_data)
+            # Reset states
             st.session_state.ask_del = False
             st.rerun()
-    with c_nee:
-        if st.button("NEE, Annuleren", key="cancel_del_btn", use_container_width=True):
+    with col_nee:
+        if st.button("❌ ANNULEER", key="cancel_del_btn", use_container_width=True):
             st.session_state.ask_del = False
             st.rerun()
 
 elif aantal_geselecteerd > 0:
-    # FASE 2: VERWIJDER KNOP (Er is iets aangevinkt)
+    # FASE 2: ER IS IETS GESELECTEERD -> TOON VERWIJDER KNOP
     c_txt, c_btn = st.columns([3, 1], vertical_alignment="center")
     with c_txt:
         st.markdown(f"✅ **{aantal_geselecteerd}** geselecteerd")
@@ -237,27 +222,25 @@ elif aantal_geselecteerd > 0:
         if st.button(f"🗑️ Verwijder ({aantal_geselecteerd})", key="header_del_btn", use_container_width=True):
             st.session_state.ask_del = True
             st.rerun()
-
 else:
-    # FASE 1: ZOEKBALK (Standaard)
-    c_input, c_btn_zoek, c_btn_wis = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
-    with c_input:
-        zoekterm = st.text_input("Zoeken", placeholder="🔍 Typ order, maat, locatie...", label_visibility="collapsed", key="zoek_input")
-    with c_btn_zoek:
-        st.button("🔍", key="search_btn", help="Zoeken", use_container_width=True)
-    with c_btn_wis:
-        st.button("❌", key="clear_btn", on_click=clear_search, help="Zoekopdracht wissen", use_container_width=True)
+    # FASE 1: STANDAARD ZOEKBALK
+    c_in, c_zo, c_wi = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
+    with c_in:
+        zoekterm = st.text_input("Zoek", placeholder="🔍 Typ order, maat of locatie...", label_visibility="collapsed", key="zoek_input")
+    with c_zo:
+        st.button("🔍", key="search_btn", use_container_width=True)
+    with c_wi:
+        st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Filter Data voor Weergave
-view_df = df.copy()
-# Alleen filteren als we NIET aan het verwijderen zijn (zodat je je selectie niet kwijtraakt)
+# --- FILTER DATA VOOR WEERGAVE ---
+view_df = df.copy() # We werken op een kopie voor weergave, zodat index intact blijft
 if aantal_geselecteerd == 0 and zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# 5. TABEL
+# --- DE TABEL ---
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -271,17 +254,25 @@ edited_df = st.data_editor(
         "Order": st.column_config.TextColumn("Order", width="medium"),
         "ID": None
     },
-    disabled=["ID"], 
+    disabled=["ID"],
     hide_index=True,
-    num_rows="fixed",
-    height=700, 
-    use_container_width=True, # VOLLE BREEDTE
+    use_container_width=True,
+    height=700,
     key="editor"
 )
 
-# 6. OPSLAAN LOGICA (CRUCIAAL: MET RERUN)
-if not edited_df.drop(columns=["Selecteer"]).equals(df.loc[edited_df.index].drop(columns=["Selecteer"])):
+# --- UPDATE LOGICA ---
+# Dit is het belangrijkste deel:
+# Als de gebruiker iets aanpast in 'edited_df' (vinkje zetten), moeten we dat terugschrijven naar de hoofdtabel 'df'.
+# Omdat 'view_df' soms gefilterd is, gebruiken we de index (of ID) om de juiste regels te updaten.
+
+if not edited_df.equals(view_df):
+    # Update de hoofd-dataset met de wijzigingen uit de editor
     st.session_state.mijn_data.update(edited_df)
+    
+    # Sla direct op naar cloud (achtergrond)
     sla_data_op(st.session_state.mijn_data)
-    # HIER ZAT HET PROBLEEM: Direct herladen zodat de knoppen bovenin updaten!
+    
+    # CRUCIAAL: Herlaad de pagina direct. 
+    # Hierdoor ziet de 'Actiebalk' bovenin direct dat er een vinkje staat.
     st.rerun()
