@@ -12,7 +12,7 @@ st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_st
 # --- CSS: PRO DESIGN ---
 st.markdown("""
     <style>
-    /* 1. Algemene Layout Strakker */
+    /* 1. Algemene Layout */
     .block-container {
         padding-top: 1rem;
         padding-bottom: 3rem;
@@ -23,7 +23,7 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* 2. Dashboard Cards (Statistieken) */
+    /* 2. Dashboard Cards */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -32,7 +32,7 @@ st.markdown("""
         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
 
-    /* 3. Actiebalk (Zoeken & Knoppen Container) */
+    /* 3. Actiebalk */
     .actie-balk {
         background-color: #f8f9fa;
         padding: 15px;
@@ -42,7 +42,6 @@ st.markdown("""
     }
 
     /* 4. Knoppen Styling */
-    /* Blauwe Knoppen (Zoek, Upload) */
     div.stButton > button[key="search_btn"], 
     div.stButton > button[key="upload_btn"] { 
         background-color: #0d6efd; 
@@ -52,7 +51,6 @@ st.markdown("""
         height: 42px;
     }
     
-    /* Grijze/Witte Knoppen (Wis) */
     div.stButton > button[key="clear_btn"] { 
         background-color: #ffffff; 
         color: #6c757d; 
@@ -61,7 +59,6 @@ st.markdown("""
         height: 42px; 
     }
 
-    /* Gevaar Knoppen (Verwijder, Nee) */
     div.stButton > button[key="header_del_btn"],
     div.stButton > button[key="cancel_del_btn"] {
         background-color: #dc3545;
@@ -72,7 +69,6 @@ st.markdown("""
         font-weight: 600;
     }
 
-    /* Bevestig Knop (Ja) */
     div.stButton > button[key="real_del_btn"] {
         background-color: #198754;
         color: white;
@@ -132,6 +128,20 @@ def sla_data_op(df):
 def clear_search():
     st.session_state.zoek_input = ""
 
+def bereken_unieke_orders(df):
+    """
+    Logica: 252464-1 en 252464-2 zijn 1 order.
+    We splitsen op het streepje '-' en pakken het eerste deel.
+    """
+    try:
+        # Filter lege orders eruit
+        orders = df[df["Order"] != ""]["Order"].astype(str)
+        # Pak alles voor het streepje
+        basis_orders = orders.apply(lambda x: x.split('-')[0].strip())
+        return basis_orders.nunique()
+    except:
+        return 0
+
 # --- AUTH ---
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = False
@@ -159,11 +169,8 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# 2. SIDEBAR (IMPORT)
+# 2. SIDEBAR (IMPORT ONLY - CLEAN)
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2991/2991112.png", width=50)
-    st.header("Beheer")
-    st.markdown("---")
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Kies .xlsx bestand", type=["xlsx"], label_visibility="collapsed")
     
@@ -210,21 +217,21 @@ with col_head2:
         total_aantal = 0
     st.metric("Totaal Ruiten", total_aantal)
 with col_head3:
-    st.metric("Unieke Orders", len(df["Order"].unique()))
+    # Aangepaste logica voor unieke orders (252464-1 en 252464-2 = 1 order)
+    unieke_orders = bereken_unieke_orders(df)
+    st.metric("Unieke Orders", unieke_orders)
 
-# 4. ACTIEBALK (ZOEKEN & ACTIES)
+# 4. ACTIEBALK
 st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
 
-# Check of er items geselecteerd zijn voor de dynamische weergave
 try:
     geselecteerd = df[df["Selecteer"] == True]
     aantal_geselecteerd = len(geselecteerd)
 except:
     aantal_geselecteerd = 0
 
-# Layout: Als er selectie is, toon DELETE knop rechts. Anders toon zoekbalk.
 if aantal_geselecteerd > 0:
-    # --- MODUS: VERWIJDEREN ---
+    # MODUS: VERWIJDEREN
     c_info, c_del = st.columns([3, 1], vertical_alignment="center")
     with c_info:
         st.markdown(f"**{aantal_geselecteerd}** regel(s) geselecteerd")
@@ -233,8 +240,7 @@ if aantal_geselecteerd > 0:
             st.session_state.ask_del = True
 
 else:
-    # --- MODUS: ZOEKEN ---
-    # Compacte indeling: Zoekbalk breed, knoppen smal ernaast
+    # MODUS: ZOEKEN
     c_input, c_btn_zoek, c_btn_wis = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
     
     with c_input:
@@ -246,13 +252,13 @@ else:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Filter Data op Zoekterm
+# Filter Data
 view_df = df.copy()
 if aantal_geselecteerd == 0 and zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# 5. TABEL (VOLLE BREEDTE & STABIEL)
+# 5. TABEL
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -270,16 +276,15 @@ edited_df = st.data_editor(
     hide_index=True,
     num_rows="fixed",
     height=700, 
-    use_container_width=True, # VOLLE BREEDTE AAN
+    use_container_width=True, 
     key="editor"
 )
 
-# 6. OPSLAAN & DIALOOGVENSTERS
+# 6. OPSLAAN & DIALOOG
 if not edited_df.drop(columns=["Selecteer"]).equals(df.loc[edited_df.index].drop(columns=["Selecteer"])):
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
 
-# Bevestigingsdialoog (verschijnt direct onder de actiebalk als nodig)
 if st.session_state.get('ask_del'):
     st.info("⚠️ Weet je zeker dat je deze regels wilt verwijderen?")
     col_ja, col_nee = st.columns([1, 1])
