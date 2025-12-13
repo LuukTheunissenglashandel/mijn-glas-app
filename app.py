@@ -9,7 +9,7 @@ DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: DESIGN & LAYOUT ---
+# --- CSS: DESIGN & TABLET TWEAKS ---
 st.markdown("""
     <style>
     /* Algemeen */
@@ -28,25 +28,33 @@ st.markdown("""
     /* Knoppen */
     div.stButton > button { border-radius: 6px; height: 42px; font-weight: 600; border: none; }
     
-    /* Blauw (Zoek/Upload) */
     div.stButton > button[key="search_btn"], div.stButton > button[key="upload_btn"] { 
         background-color: #0d6efd; color: white; 
     }
-    /* Wit/Grijs (Wis) */
     div.stButton > button[key="clear_btn"] { 
         background-color: white; color: #dc3545; border: 1px solid #dc3545; 
     }
-    /* Rood (Verwijder Actie) */
     div.stButton > button[key="header_del_btn"], div.stButton > button[key="cancel_del_btn"] {
         background-color: #dc3545; color: white;
     }
-    /* Groen (Bevestig) */
     div.stButton > button[key="real_del_btn"] {
         background-color: #198754; color: white;
     }
 
     /* Checkbox vergroten */
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
+
+    /* --- TRUCJE: VERBERG SIDEBAR OP TABLETS/MOBIEL --- */
+    /* Als scherm kleiner is dan 1000px (Tablets zoals Samsung A9 zitten vaak rond 800-1300px) */
+    @media only screen and (max-width: 1024px) {
+        section[data-testid="stSidebar"] {
+            display: none !important;
+        }
+        /* Verberg ook het knopje om hem te openen */
+        [data-testid="collapsedControl"] {
+            display: none !important;
+        }
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -63,7 +71,6 @@ def clean_int(val):
         return str(val)
 
 def laad_data_van_cloud():
-    """Haalt verse data op van Google Sheets"""
     conn = get_connection()
     try:
         df = conn.read(worksheet="Blad1", ttl=0)
@@ -81,11 +88,9 @@ def laad_data_van_cloud():
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
         if col in df.columns: df[col] = df[col].apply(clean_int)
             
-    # Return schoon dataframe, nog ZONDER 'Selecteer' kolom
     return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
 
 def sla_data_op(df):
-    """Slaat op naar Google Sheets (filtert eerst de 'Selecteer' kolom eruit)"""
     conn = get_connection()
     save_df = df.copy()
     if "Selecteer" in save_df.columns:
@@ -120,58 +125,49 @@ if not st.session_state.ingelogd:
                 st.error("Fout wachtwoord")
     st.stop()
 
-# --- INITIALISATIE DATA ---
-# We laden data 1 keer in de sessie. Daarna werken we met de sessie-kopie.
+# --- INITIALISATIE ---
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
-    # Voeg Selecteer kolom toe aan sessie data
     st.session_state.mijn_data.insert(0, "Selecteer", False)
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (IMPORT) ---
+# --- SIDEBAR (ALLEEN ZICHTBAAR OP DESKTOP DOOR CSS) ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
-    uploaded_file = st.file_uploader("Sleep bestand hierheen", type=["xlsx"], label_visibility="collapsed")
+    uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
     
     if uploaded_file:
         st.info("Bestand herkend!")
-        if st.button("📤 Toevoegen aan voorraad", key="upload_btn"):
+        if st.button("📤 Toevoegen", key="upload_btn"):
             try:
                 nieuwe_data = pd.read_excel(uploaded_file)
-                # Kolommen netjes maken
                 nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
                 mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
                 nieuwe_data = nieuwe_data.rename(columns=mapping)
                 
-                # Data voorbereiden
                 nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
                 if "Locatie" not in nieuwe_data.columns: nieuwe_data["Locatie"] = ""
                 
-                # Cijfers opschonen
                 for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
                     if col in nieuwe_data.columns: nieuwe_data[col] = nieuwe_data[col].apply(clean_int)
                 
-                # Zorg dat alle kolommen bestaan
                 for c in DATAKOLOMMEN:
                     if c not in nieuwe_data.columns: nieuwe_data[c] = ""
                 
                 final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
-                final_upload.insert(0, "Selecteer", False) # Ook nieuwe regels krijgen vinkje-kolom
+                final_upload.insert(0, "Selecteer", False) 
                 
-                # 1. Update Sessie (Direct zichtbaar)
                 st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
-                
-                # 2. Update Cloud (Achtergrond)
                 sla_data_op(st.session_state.mijn_data)
                 
                 st.success(f"{len(final_upload)} regels toegevoegd!")
-                st.rerun() # Ververs scherm zodat data zichtbaar is
+                st.rerun() 
             except Exception as e:
-                st.error(f"Fout tijdens upload: {e}")
+                st.error(f"Fout: {e}")
     
     st.markdown("---")
-    if st.button("🔄 Data Herladen van Cloud"):
+    if st.button("🔄 Data Herladen"):
         del st.session_state.mijn_data
         st.rerun()
 
@@ -184,28 +180,23 @@ with c2:
     st.metric("Totaal Ruiten", tot)
 with c3: st.metric("Unieke Orders", bereken_unieke_orders(df))
 
-# --- LOGICA VOOR ACTIEBALK ---
+# --- ACTIEBALK ---
 try:
-    # Tel hoeveel vinkjes er op 'True' staan in de sessie data
     aantal_geselecteerd = len(df[df["Selecteer"] == True])
 except:
     aantal_geselecteerd = 0
 
-# --- DE ACTIEBALK ---
 st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
-    # FASE 3: BEVESTIGING
+    # BEVESTIGING
     st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels wilt verwijderen?**")
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
         if st.button("✅ JA, Verwijderen", key="real_del_btn", use_container_width=True):
             ids_weg = df[df["Selecteer"] == True]["ID"].tolist()
-            # Verwijder uit sessie
             st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
-            # Opslaan naar cloud
             sla_data_op(st.session_state.mijn_data)
-            # Reset states
             st.session_state.ask_del = False
             st.rerun()
     with col_nee:
@@ -214,7 +205,7 @@ if st.session_state.get('ask_del'):
             st.rerun()
 
 elif aantal_geselecteerd > 0:
-    # FASE 2: ER IS IETS GESELECTEERD -> TOON VERWIJDER KNOP
+    # VERWIJDER KNOP
     c_txt, c_btn = st.columns([3, 1], vertical_alignment="center")
     with c_txt:
         st.markdown(f"✅ **{aantal_geselecteerd}** geselecteerd")
@@ -223,7 +214,7 @@ elif aantal_geselecteerd > 0:
             st.session_state.ask_del = True
             st.rerun()
 else:
-    # FASE 1: STANDAARD ZOEKBALK
+    # ZOEKBALK
     c_in, c_zo, c_wi = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
     with c_in:
         zoekterm = st.text_input("Zoek", placeholder="🔍 Typ order, maat of locatie...", label_visibility="collapsed", key="zoek_input")
@@ -234,13 +225,12 @@ else:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- FILTER DATA VOOR WEERGAVE ---
-view_df = df.copy() # We werken op een kopie voor weergave, zodat index intact blijft
+# --- TABEL ---
+view_df = df.copy() 
 if aantal_geselecteerd == 0 and zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- DE TABEL ---
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -261,18 +251,8 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- UPDATE LOGICA ---
-# Dit is het belangrijkste deel:
-# Als de gebruiker iets aanpast in 'edited_df' (vinkje zetten), moeten we dat terugschrijven naar de hoofdtabel 'df'.
-# Omdat 'view_df' soms gefilterd is, gebruiken we de index (of ID) om de juiste regels te updaten.
-
+# --- UPDATE ---
 if not edited_df.equals(view_df):
-    # Update de hoofd-dataset met de wijzigingen uit de editor
     st.session_state.mijn_data.update(edited_df)
-    
-    # Sla direct op naar cloud (achtergrond)
     sla_data_op(st.session_state.mijn_data)
-    
-    # CRUCIAAL: Herlaad de pagina direct. 
-    # Hierdoor ziet de 'Actiebalk' bovenin direct dat er een vinkje staat.
     st.rerun()
