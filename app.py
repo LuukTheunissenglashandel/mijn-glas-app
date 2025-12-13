@@ -7,12 +7,12 @@ from streamlit_gsheets import GSheetsConnection
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
+st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="collapsed")
 
 # --- CSS: PRO DESIGN ---
 st.markdown("""
     <style>
-    /* 1. Algemene Layout */
+    /* Algemene Layout */
     .block-container {
         padding-top: 1rem;
         padding-bottom: 3rem;
@@ -23,7 +23,7 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* 2. Dashboard Cards */
+    /* Dashboard Cards */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -32,7 +32,7 @@ st.markdown("""
         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
 
-    /* 3. Actiebalk */
+    /* Actiebalk Container */
     .actie-balk {
         background-color: #f8f9fa;
         padding: 15px;
@@ -41,44 +41,30 @@ st.markdown("""
         margin-bottom: 10px;
     }
 
-    /* 4. Knoppen Styling */
+    /* Knoppen Styling */
     div.stButton > button[key="search_btn"], 
     div.stButton > button[key="upload_btn"] { 
-        background-color: #0d6efd; 
-        color: white; 
-        border: none;
-        border-radius: 6px;
-        height: 42px;
+        background-color: #0d6efd; color: white; border: none; border-radius: 6px; height: 42px;
     }
     
     div.stButton > button[key="clear_btn"] { 
-        background-color: #ffffff; 
-        color: #6c757d; 
-        border: 1px solid #ced4da;
-        border-radius: 6px; 
-        height: 42px; 
+        background-color: #ffffff; color: #6c757d; border: 1px solid #ced4da; border-radius: 6px; height: 42px; 
     }
 
-    div.stButton > button[key="header_del_btn"],
-    div.stButton > button[key="cancel_del_btn"] {
-        background-color: #dc3545;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        height: 42px;
-        font-weight: 600;
+    /* Verwijder Knoppen */
+    div.stButton > button[key="header_del_btn"] {
+        background-color: #dc3545; color: white; border: none; border-radius: 6px; height: 42px; font-weight: 600;
     }
 
     div.stButton > button[key="real_del_btn"] {
-        background-color: #198754;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        height: 42px;
-        font-weight: 600;
+        background-color: #198754; color: white; border: none; border-radius: 6px; height: 42px; font-weight: 600;
+    }
+    
+    div.stButton > button[key="cancel_del_btn"] {
+        background-color: #6c757d; color: white; border: none; border-radius: 6px; height: 42px; font-weight: 600;
     }
 
-    /* 5. Tabel Optimalisatie */
+    /* Tabel Vinkjes */
     input[type=checkbox] { transform: scale(1.4); cursor: pointer; }
     </style>
     """, unsafe_allow_html=True)
@@ -129,14 +115,8 @@ def clear_search():
     st.session_state.zoek_input = ""
 
 def bereken_unieke_orders(df):
-    """
-    Logica: 252464-1 en 252464-2 zijn 1 order.
-    We splitsen op het streepje '-' en pakken het eerste deel.
-    """
     try:
-        # Filter lege orders eruit
         orders = df[df["Order"] != ""]["Order"].astype(str)
-        # Pak alles voor het streepje
         basis_orders = orders.apply(lambda x: x.split('-')[0].strip())
         return basis_orders.nunique()
     except:
@@ -164,12 +144,13 @@ if not st.session_state.ingelogd:
 # 1. Data Laden
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
+    # Zorg dat Selecteer kolom bestaat
     if "Selecteer" not in st.session_state.mijn_data.columns:
         st.session_state.mijn_data.insert(0, "Selecteer", False)
 
 df = st.session_state.mijn_data
 
-# 2. SIDEBAR (IMPORT ONLY - CLEAN)
+# 2. SIDEBAR (IMPORT)
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Kies .xlsx bestand", type=["xlsx"], label_visibility="collapsed")
@@ -206,7 +187,7 @@ with st.sidebar:
         del st.session_state.mijn_data
         st.rerun()
 
-# 3. DASHBOARD HEADER
+# 3. HEADER & KPI's
 col_head1, col_head2, col_head3 = st.columns([2, 1, 1])
 with col_head1:
     st.title("🏭 Glas Voorraad")
@@ -217,32 +198,49 @@ with col_head2:
         total_aantal = 0
     st.metric("Totaal Ruiten", total_aantal)
 with col_head3:
-    # Aangepaste logica voor unieke orders (252464-1 en 252464-2 = 1 order)
     unieke_orders = bereken_unieke_orders(df)
     st.metric("Unieke Orders", unieke_orders)
 
-# 4. ACTIEBALK
+# 4. ACTIEBALK (SLIMME HEADER)
 st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
 
+# Tel selecties
 try:
     geselecteerd = df[df["Selecteer"] == True]
     aantal_geselecteerd = len(geselecteerd)
 except:
     aantal_geselecteerd = 0
 
-if aantal_geselecteerd > 0:
-    # MODUS: VERWIJDEREN
-    c_info, c_del = st.columns([3, 1], vertical_alignment="center")
-    with c_info:
-        st.markdown(f"**{aantal_geselecteerd}** regel(s) geselecteerd")
-    with c_del:
+# LOGICA: Toon ofwel Verwijder-dialoog, ofwel Zoekbalk
+if st.session_state.get('ask_del'):
+    # FASE 3: BEVESTIGING
+    st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regel(s) wilt verwijderen?**")
+    c_ja, c_nee = st.columns([1, 1])
+    with c_ja:
+        if st.button("JA, Verwijderen", key="real_del_btn", use_container_width=True):
+            ids_weg = geselecteerd["ID"].tolist()
+            st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
+            sla_data_op(st.session_state.mijn_data)
+            st.session_state.ask_del = False
+            st.rerun()
+    with c_nee:
+        if st.button("NEE, Annuleren", key="cancel_del_btn", use_container_width=True):
+            st.session_state.ask_del = False
+            st.rerun()
+
+elif aantal_geselecteerd > 0:
+    # FASE 2: VERWIJDER KNOP (Er is iets aangevinkt)
+    c_txt, c_btn = st.columns([3, 1], vertical_alignment="center")
+    with c_txt:
+        st.markdown(f"✅ **{aantal_geselecteerd}** geselecteerd")
+    with c_btn:
         if st.button(f"🗑️ Verwijder ({aantal_geselecteerd})", key="header_del_btn", use_container_width=True):
             st.session_state.ask_del = True
+            st.rerun()
 
 else:
-    # MODUS: ZOEKEN
+    # FASE 1: ZOEKBALK (Standaard)
     c_input, c_btn_zoek, c_btn_wis = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
-    
     with c_input:
         zoekterm = st.text_input("Zoeken", placeholder="🔍 Typ order, maat, locatie...", label_visibility="collapsed", key="zoek_input")
     with c_btn_zoek:
@@ -252,8 +250,9 @@ else:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Filter Data
+# Filter Data voor Weergave
 view_df = df.copy()
+# Alleen filteren als we NIET aan het verwijderen zijn (zodat je je selectie niet kwijtraakt)
 if aantal_geselecteerd == 0 and zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
@@ -276,26 +275,13 @@ edited_df = st.data_editor(
     hide_index=True,
     num_rows="fixed",
     height=700, 
-    use_container_width=True, 
+    use_container_width=True, # VOLLE BREEDTE
     key="editor"
 )
 
-# 6. OPSLAAN & DIALOOG
+# 6. OPSLAAN LOGICA (CRUCIAAL: MET RERUN)
 if not edited_df.drop(columns=["Selecteer"]).equals(df.loc[edited_df.index].drop(columns=["Selecteer"])):
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
-
-if st.session_state.get('ask_del'):
-    st.info("⚠️ Weet je zeker dat je deze regels wilt verwijderen?")
-    col_ja, col_nee = st.columns([1, 1])
-    with col_ja:
-        if st.button("JA, Verwijderen", key="real_del_btn", use_container_width=True):
-            ids_weg = geselecteerd["ID"].tolist()
-            st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
-            sla_data_op(st.session_state.mijn_data)
-            st.session_state.ask_del = False
-            st.rerun()
-    with col_nee:
-        if st.button("NEE, Annuleren", key="cancel_del_btn", use_container_width=True):
-            st.session_state.ask_del = False
-            st.rerun()
+    # HIER ZAT HET PROBLEEM: Direct herladen zodat de knoppen bovenin updaten!
+    st.rerun()
