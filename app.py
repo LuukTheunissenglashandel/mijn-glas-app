@@ -4,43 +4,26 @@ import uuid
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURATIE & STYLING ---
+# --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-BESTANDSNAAM = "voorraad.csv"
-
-# Volgorde aangepast: Locatie als eerste
+# Volgorde: Locatie eerst
 ZICHTBARE_KOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-st.set_page_config(
-    layout="wide", 
-    page_title="Glas Voorraad",
-    initial_sidebar_state="collapsed" # Sidebar standaard dicht voor meer ruimte
-)
+st.set_page_config(layout="wide", page_title="Glas Voorraad Beheer")
 
-# CSS om knoppen kleur te geven en Streamlit menu's te verbergen
+# CSS voor kleuren en verbergen menu's
 st.markdown("""
     <style>
-    /* Verberg de 'Manage app' knop en het rode lijntje bovenin */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    
-    /* Gekleurde knoppen voor bevestiging */
-    div.stButton > button:first-child[key*="bevestig_ja"] {
-        background-color: #28a745;
-        color: white;
-        border: None;
-    }
-    div.stButton > button:first-child[key*="bevestig_nee"] {
-        background-color: #dc3545;
-        color: white;
-        border: None;
-    }
+    /* Kleuren voor de bevestigingsknoppen */
+    div.stButton > button[key="real_del_btn"] { background-color: #28a745; color: white; }
+    div.stButton > button[key="cancel_del_btn"] { background-color: #dc3545; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- FUNCTIES ---
-
 def get_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
@@ -48,142 +31,143 @@ def laad_data():
     conn = get_connection()
     try:
         df = conn.read(worksheet="Blad1", ttl=0)
+        if df.empty:
+            return pd.DataFrame(columns=["ID"] + ZICHTBARE_KOLOMMEN)
     except:
-        df = pd.DataFrame(columns=["ID"] + ZICHTBARE_KOLOMMEN)
+        return pd.DataFrame(columns=["ID"] + ZICHTBARE_KOLOMMEN)
 
     if "ID" not in df.columns:
         df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
-        
-    for kolom in ZICHTBARE_KOLOMMEN:
-        if kolom not in df.columns:
-            df[kolom] = ""
     
-    return df.fillna("").astype(str)
+    # Zorg dat alle gewenste kolommen er zijn
+    for col in ZICHTBARE_KOLOMMEN:
+        if col not in df.columns:
+            df[col] = ""
+            
+    return df[["ID"] + ZICHTBARE_KOLOMMEN].fillna("").astype(str)
 
 def sla_data_op(df):
     conn = get_connection()
     conn.update(worksheet="Blad1", data=df)
     st.cache_data.clear()
 
-def check_wachtwoord():
-    if "ingelogd" not in st.session_state:
-        st.session_state.ingelogd = False
-    if not st.session_state.ingelogd:
-        col1, col2, col3 = st.columns([1,2,1])
-        with col2:
-            st.header("🔒 Inloggen")
-            ww = st.text_input("Wachtwoord", type="password")
-            if st.button("Starten"):
-                if ww == WACHTWOORD:
-                    st.session_state.ingelogd = True
-                    st.rerun()
-                else:
-                    st.error("Fout wachtwoord")
-        return False
-    return True
+# --- AUTH ---
+if "ingelogd" not in st.session_state:
+    st.session_state.ingelogd = False
 
-# --- MAIN ---
-
-def main():
-    if not check_wachtwoord():
-        return
-
-    st.title("🏭 Glas Voorraad")
-
-    df = laad_data()
-
-    # 2. Sidebar (voor import)
-    with st.sidebar:
-        st.header("📥 Import")
-        uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
-        if uploaded_file:
-            if st.button("Toevoegen"):
-                nieuwe_data = pd.read_excel(uploaded_file)
-                nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns] 
-                nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
-                nieuwe_data["Locatie"] = nieuwe_data.get("Locatie", "")
-                df = pd.concat([df, nieuwe_data], ignore_index=True)
-                df = df[["ID"] + ZICHTBARE_KOLOMMEN]
-                sla_data_op(df)
-                st.success("✅ Opgeslagen!")
+if not st.session_state.ingelogd:
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        st.header("🔒 Inloggen")
+        ww = st.text_input("Wachtwoord", type="password")
+        if st.button("Starten"):
+            if ww == WACHTWOORD:
+                st.session_state.ingelogd = True
                 st.rerun()
+            else:
+                st.error("Fout wachtwoord")
+    st.stop()
 
-    # 3. LAYOUT BOVEN TABEL
-    col_search, col_buttons = st.columns([3, 1]) 
-    with col_search:
-        zoekterm = st.text_input("🔍 Zoeken", placeholder="Typ order, afmeting of locatie...")
-    button_placeholder = col_buttons.empty()
+# --- MAIN APP ---
+st.title("🏭 Glas Voorraad")
+df = laad_data()
 
-    # 4. TABEL INSTELLINGEN
-    gb = GridOptionsBuilder.from_dataframe(df[["ID"] + ZICHTBARE_KOLOMMEN])
-    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=15)
-    if zoekterm:
-        gb.configure_grid_options(quickFilterText=zoekterm)
+# 1. Sidebar voor Import
+with st.sidebar:
+    st.header("📥 Import")
+    uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+    if uploaded_file:
+        try:
+            nieuwe_data = pd.read_excel(uploaded_file)
+            # Kolomnamen opschonen naar de gewenste koppen
+            nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
+            # Match exacte namen
+            mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
+            nieuwe_data = nieuwe_data.rename(columns=mapping)
+            
+            if st.button("Bevestig Upload"):
+                nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
+                if "Locatie" not in nieuwe_data.columns:
+                    nieuwe_data["Locatie"] = ""
+                
+                # Alleen relevante kolommen houden
+                for c in ZICHTBARE_KOLOMMEN:
+                    if c not in nieuwe_data.columns: nieuwe_data[c] = ""
+                
+                final_upload = nieuwe_data[["ID"] + ZICHTBARE_KOLOMMEN].astype(str)
+                df_combined = pd.concat([df, final_upload], ignore_index=True)
+                sla_data_op(df_combined)
+                st.success("✅ Geüpload naar Cloud!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Fout: {e}")
 
-    # Basis instellingen: wrapText zorgt dat volledige tekst zichtbaar is
-    gb.configure_default_column(
-        editable=False, filterable=True, sortable=True, resizable=True, 
-        wrapText=True, autoHeight=True
-    )
-    
-    # Kolom breedtes instellen
-    gb.configure_column("Locatie", editable=True, checkboxSelection=True, headerCheckboxSelection=True, width=120, cellStyle={'backgroundColor': '#e6f3ff'})
-    
-    # Smalle kolommen (autoSize)
-    for col in ["Aantal", "Breedte", "Hoogte", "Spouw"]:
-        gb.configure_column(col, width=80) 
-        
-    gb.configure_column("Omschrijving", width=300)
-    gb.configure_column("Order", width=120)
-    gb.configure_column("ID", hide=True)
+# 2. Zoeken en Knoppen Layout
+col_search, col_buttons = st.columns([3, 1])
+with col_search:
+    zoekterm = st.text_input("🔍 Zoeken", placeholder="Type om te filteren...")
+btn_place = col_buttons.empty()
 
-    gridOptions = gb.build()
+# 3. Tabel configuratie
+gb = GridOptionsBuilder.from_dataframe(df)
+gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=15)
+if zoekterm:
+    gb.configure_grid_options(quickFilterText=zoekterm)
 
-    grid_response = AgGrid(
-        df,
-        gridOptions=gridOptions,
-        update_mode=GridUpdateMode.MODEL_CHANGED, 
-        fit_columns_on_grid_load=True, # Alles proberen te passen op scherm
-        theme='alpine',
-        height=500,
-        allow_unsafe_jscode=True
-    )
+# Default instellingen voor Samsung Tablet (wrap text)
+gb.configure_default_column(editable=False, filterable=True, sortable=True, resizable=True, wrapText=True, autoHeight=True)
 
-    updated_df = grid_response['data']
-    selected_rows = grid_response['selected_rows']
-    
-    # Opslaan bij wijziging
-    if not df.astype(str).equals(updated_df.astype(str)):
-        sla_data_op(updated_df)
-        st.toast("Wijziging opgeslagen!", icon="✅")
+# Specifieke breedtes
+gb.configure_column("Locatie", editable=True, checkboxSelection=True, headerCheckboxSelection=True, width=110, cellStyle={'backgroundColor': '#e6f3ff'})
+for col in ["Aantal", "Breedte", "Hoogte", "Spouw"]:
+    gb.configure_column(col, width=80)
+gb.configure_column("Omschrijving", width=300)
+gb.configure_column("ID", hide=True)
 
-    # 5. VERWIJDEREN (RECHTSBOVEN)
-    if isinstance(selected_rows, pd.DataFrame):
-        selected_rows = selected_rows.to_dict('records')
-    elif selected_rows is None:
-        selected_rows = []
+gridOptions = gb.build()
 
-    if len(selected_rows) > 0:
-        with button_placeholder.container():
-            st.write("")
-            if st.button(f"🗑️ Verwijder ({len(selected_rows)})", type="primary"):
-                st.session_state['confirm_del'] = True
+grid_response = AgGrid(
+    df,
+    gridOptions=gridOptions,
+    update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED,
+    data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+    fit_columns_on_grid_load=True,
+    theme='alpine',
+    height=500,
+    allow_unsafe_jscode=True
+)
 
-            if st.session_state.get('confirm_del'):
-                st.write("Zeker weten?")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("JA", key="bevestig_ja"):
-                        ids = [rij['ID'] for rij in selected_rows]
-                        full_df = laad_data()
-                        new_df = full_df[~full_df['ID'].isin(ids)]
-                        sla_data_op(new_df)
-                        st.session_state['confirm_del'] = False
-                        st.rerun()
-                with c2:
-                    if st.button("NEE", key="bevestig_nee"):
-                        st.session_state['confirm_del'] = False
-                        st.rerun()
+# Wijzigingen opslaan
+updated_df = grid_response['data']
+if not df.equals(updated_df):
+    sla_data_op(updated_df)
+    st.toast("Opgeslagen!")
 
-if __name__ == "__main__":
-    main()
+# 4. Verwijder logica
+selected = grid_response['selected_rows']
+if isinstance(selected, pd.DataFrame):
+    selected = selected.to_dict('records')
+elif selected is None:
+    selected = []
+
+if len(selected) > 0:
+    with btn_place.container():
+        if st.button(f"🗑️ Verwijder ({len(selected)})", type="primary"):
+            st.session_state.ask_del = True
+            
+        if st.session_state.get('ask_del'):
+            st.error("Zeker weten?")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("JA", key="real_del_btn"):
+                    ids_to_del = [r['ID'] for r in selected]
+                    # Altijd verse data laden voor verwijderen om fouten te voorkomen
+                    full_df = laad_data()
+                    new_df = full_df[~full_df['ID'].isin(ids_to_del)]
+                    sla_data_op(new_df)
+                    st.session_state.ask_del = False
+                    st.rerun()
+            with c2:
+                if st.button("NEE", key="cancel_del_btn"):
+                    st.session_state.ask_del = False
+                    st.rerun()
