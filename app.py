@@ -7,89 +7,83 @@ from streamlit_gsheets import GSheetsConnection
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="collapsed")
+st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: MODERN DESIGN & TABLET OPTIMALISATIE ---
+# --- CSS: PRO DESIGN ---
 st.markdown("""
     <style>
-    /* 1. Algemene Layout */
+    /* 1. Algemene Layout Strakker */
     .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 5rem;
+        padding-top: 1rem;
+        padding-bottom: 3rem;
         max_width: 100%;
     }
     
-    /* Verberg standaard Streamlit elementen */
+    /* Verberg standaard elementen */
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
     /* 2. Dashboard Cards (Statistieken) */
     div[data-testid="stMetric"] {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        padding: 10px;
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        padding: 15px;
         border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
 
-    /* 3. Zoekbalk Container */
-    .zoek-container {
-        background-color: white;
+    /* 3. Actiebalk (Zoeken & Knoppen Container) */
+    .actie-balk {
+        background-color: #f8f9fa;
         padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
-        border: 1px solid #eee;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+        margin-bottom: 10px;
     }
 
     /* 4. Knoppen Styling */
-    /* Primaire Actie (Zoeken, Uploaden, Ja) */
+    /* Blauwe Knoppen (Zoek, Upload) */
     div.stButton > button[key="search_btn"], 
-    div.stButton > button[key="real_del_btn"],
     div.stButton > button[key="upload_btn"] { 
-        background-color: #0056b3; /* Professioneel Blauw */
+        background-color: #0d6efd; 
         color: white; 
-        border-radius: 6px; 
-        height: 45px; 
-        width: 100%; 
         border: none;
-        font-weight: 500;
-        transition: all 0.2s;
+        border-radius: 6px;
+        height: 42px;
     }
-    div.stButton > button[key="search_btn"]:hover { background-color: #004494; }
-
-    /* Secundaire Actie (Wissen, Nee) */
-    div.stButton > button[key="clear_btn"],
-    div.stButton > button[key="cancel_del_btn"] { 
+    
+    /* Grijze/Witte Knoppen (Wis) */
+    div.stButton > button[key="clear_btn"] { 
         background-color: #ffffff; 
-        color: #dc3545; 
-        border: 1px solid #dc3545; 
+        color: #6c757d; 
+        border: 1px solid #ced4da;
         border-radius: 6px; 
-        height: 45px; 
-        width: 100%;
-        font-weight: 500;
+        height: 42px; 
     }
-    div.stButton > button[key="clear_btn"]:hover { background-color: #fff5f5; }
 
-    /* Verwijder knop (onderaan) */
-    div.stButton > button[key="main_delete_btn"] {
+    /* Gevaar Knoppen (Verwijder, Nee) */
+    div.stButton > button[key="header_del_btn"],
+    div.stButton > button[key="cancel_del_btn"] {
         background-color: #dc3545;
         color: white;
+        border: none;
         border-radius: 6px;
-        height: 48px;
-        width: 100%;
-        font-weight: bold;
-        box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
+        height: 42px;
+        font-weight: 600;
     }
 
-    /* 5. Tabel & Tablet Optimalisatie */
-    /* Vinkjes groter maken voor touch */
-    input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
-    
-    /* Tabel tekst iets groter en luchtiger */
-    [data-testid="stDataFrameResizable"] {
-        font-size: 16px;
+    /* Bevestig Knop (Ja) */
+    div.stButton > button[key="real_del_btn"] {
+        background-color: #198754;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        height: 42px;
+        font-weight: 600;
     }
+
+    /* 5. Tabel Optimalisatie */
+    input[type=checkbox] { transform: scale(1.4); cursor: pointer; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -145,9 +139,9 @@ if "ingelogd" not in st.session_state:
 if not st.session_state.ingelogd:
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.markdown("### 🔒 Glas Voorraad Systeem")
-        ww = st.text_input("Voer wachtwoord in", type="password")
-        if st.button("Inloggen"):
+        st.markdown("<h2 style='text-align: center;'>🔒 Glas Voorraad</h2>", unsafe_allow_html=True)
+        ww = st.text_input("Wachtwoord", type="password", label_visibility="collapsed", placeholder="Wachtwoord...")
+        if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
                 st.rerun()
@@ -165,12 +159,16 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# 2. Sidebar (Import)
+# 2. SIDEBAR (IMPORT)
 with st.sidebar:
-    st.markdown("### 📥 Excel Import")
-    uploaded_file = st.file_uploader("Sleep bestand hierheen", type=["xlsx"])
+    st.image("https://cdn-icons-png.flaticon.com/512/2991/2991112.png", width=50)
+    st.header("Beheer")
+    st.markdown("---")
+    st.subheader("📥 Excel Import")
+    uploaded_file = st.file_uploader("Kies .xlsx bestand", type=["xlsx"], label_visibility="collapsed")
+    
     if uploaded_file:
-        st.write("---")
+        st.info("Bestand gereed")
         if st.button("📤 Upload naar Cloud", key="upload_btn"):
             try:
                 nieuwe_data = pd.read_excel(uploaded_file)
@@ -192,61 +190,79 @@ with st.sidebar:
                 totaal = pd.concat([huidig_uit_cloud, final_upload], ignore_index=True)
                 sla_data_op(totaal)
                 del st.session_state.mijn_data
-                st.success("Succesvol geüpload!")
+                st.success("Geüpload!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
+    st.markdown("---")
+    if st.button("🔄 Ververs Data"):
+        del st.session_state.mijn_data
+        st.rerun()
 
-# 3. HEADER & STATISTIEKEN (KPI's)
-c_title, c_stats1, c_stats2 = st.columns([2, 1, 1])
-with c_title:
+# 3. DASHBOARD HEADER
+col_head1, col_head2, col_head3 = st.columns([2, 1, 1])
+with col_head1:
     st.title("🏭 Glas Voorraad")
-with c_stats1:
-    # Bereken totaal aantal (som van kolom Aantal, veilig geconverteerd)
+with col_head2:
     try:
-        totaal_glas = df["Aantal"].replace('', '0').astype(int).sum()
+        total_aantal = df["Aantal"].replace('', '0').astype(int).sum()
     except:
-        totaal_glas = 0
-    st.metric("Totaal Ruiten", f"{totaal_glas} stuks")
-with c_stats2:
+        total_aantal = 0
+    st.metric("Totaal Ruiten", total_aantal)
+with col_head3:
     st.metric("Unieke Orders", len(df["Order"].unique()))
 
-st.write("") # Witregel
+# 4. ACTIEBALK (ZOEKEN & ACTIES)
+st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
 
-# 4. ZOEKBALK IN 'CARD' STIJL
-with st.container():
-    # Dit maakt een visueel kader om het zoekgedeelte
-    st.markdown('<div class="zoek-container">', unsafe_allow_html=True)
-    col_input, col_zoek, col_wis = st.columns([5, 1, 1], gap="small", vertical_alignment="bottom")
+# Check of er items geselecteerd zijn voor de dynamische weergave
+try:
+    geselecteerd = df[df["Selecteer"] == True]
+    aantal_geselecteerd = len(geselecteerd)
+except:
+    aantal_geselecteerd = 0
 
-    with col_input:
-        zoekterm = st.text_input("Zoeken", placeholder="🔍 Typ ordernummer, maat of locatie...", label_visibility="visible", key="zoek_input")
+# Layout: Als er selectie is, toon DELETE knop rechts. Anders toon zoekbalk.
+if aantal_geselecteerd > 0:
+    # --- MODUS: VERWIJDEREN ---
+    c_info, c_del = st.columns([3, 1], vertical_alignment="center")
+    with c_info:
+        st.markdown(f"**{aantal_geselecteerd}** regel(s) geselecteerd")
+    with c_del:
+        if st.button(f"🗑️ Verwijder ({aantal_geselecteerd})", key="header_del_btn", use_container_width=True):
+            st.session_state.ask_del = True
 
-    with col_zoek:
-        st.button("Zoeken", key="search_btn")
-
-    with col_wis:
-        st.button("Wis", on_click=clear_search, key="clear_btn")
+else:
+    # --- MODUS: ZOEKEN ---
+    # Compacte indeling: Zoekbalk breed, knoppen smal ernaast
+    c_input, c_btn_zoek, c_btn_wis = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
     
-    st.markdown('</div>', unsafe_allow_html=True)
+    with c_input:
+        zoekterm = st.text_input("Zoeken", placeholder="🔍 Typ order, maat, locatie...", label_visibility="collapsed", key="zoek_input")
+    with c_btn_zoek:
+        st.button("🔍", key="search_btn", help="Zoeken", use_container_width=True)
+    with c_btn_wis:
+        st.button("❌", key="clear_btn", on_click=clear_search, help="Zoekopdracht wissen", use_container_width=True)
 
-# Filter logic
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Filter Data op Zoekterm
 view_df = df.copy()
-if zoekterm:
+if aantal_geselecteerd == 0 and zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# 5. TABEL (MODERN & RESPONSIVE)
+# 5. TABEL (VOLLE BREEDTE & STABIEL)
 edited_df = st.data_editor(
     view_df,
     column_config={
-        "Selecteer": st.column_config.CheckboxColumn("🗑️", default=False, width="small"),
+        "Selecteer": st.column_config.CheckboxColumn("✅", default=False, width="small"),
         "Locatie": st.column_config.TextColumn("Locatie", width="small"),
         "Aantal": st.column_config.TextColumn("Aant.", width="small"),
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
-        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"), 
+        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
         "ID": None
     },
@@ -254,39 +270,27 @@ edited_df = st.data_editor(
     hide_index=True,
     num_rows="fixed",
     height=700, 
-    use_container_width=False, # Zorgt dat horizontaal scrollen werkt op tablet
+    use_container_width=True, # VOLLE BREEDTE AAN
     key="editor"
 )
 
-# 6. OPSLAAN & VERWIJDEREN
+# 6. OPSLAAN & DIALOOGVENSTERS
 if not edited_df.drop(columns=["Selecteer"]).equals(df.loc[edited_df.index].drop(columns=["Selecteer"])):
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
 
-try:
-    geselecteerd = edited_df[edited_df["Selecteer"] == True]
-except:
-    geselecteerd = []
-
-# Verwijder knop onderaan (zwevend of vast)
-if len(geselecteerd) > 0:
-    st.write("")
-    col_del_L, col_del_R = st.columns([3, 1])
-    with col_del_R:
-        if st.button(f"🗑️ Verwijder {len(geselecteerd)} regels", type="primary", key="main_delete_btn"):
-            st.session_state.ask_del = True
-            
-    if st.session_state.get('ask_del'):
-        st.warning("Weet je zeker dat je deze regels wilt verwijderen?")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("✅ JA, Verwijderen", key="real_del_btn"):
-                ids_weg = geselecteerd["ID"].tolist()
-                st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
-                sla_data_op(st.session_state.mijn_data)
-                st.session_state.ask_del = False
-                st.rerun()
-        with c2:
-            if st.button("❌ ANNULEER", key="cancel_del_btn"):
-                st.session_state.ask_del = False
-                st.rerun()
+# Bevestigingsdialoog (verschijnt direct onder de actiebalk als nodig)
+if st.session_state.get('ask_del'):
+    st.info("⚠️ Weet je zeker dat je deze regels wilt verwijderen?")
+    col_ja, col_nee = st.columns([1, 1])
+    with col_ja:
+        if st.button("JA, Verwijderen", key="real_del_btn", use_container_width=True):
+            ids_weg = geselecteerd["ID"].tolist()
+            st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
+            sla_data_op(st.session_state.mijn_data)
+            st.session_state.ask_del = False
+            st.rerun()
+    with col_nee:
+        if st.button("NEE, Annuleren", key="cancel_del_btn", use_container_width=True):
+            st.session_state.ask_del = False
+            st.rerun()
