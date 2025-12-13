@@ -1,22 +1,21 @@
 import streamlit as st
 import pandas as pd
 import uuid
-import math
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
-WACHTWOORD = "glas123"
+WACHTWOORD = "glas5831"
 ZICHTBARE_KOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad")
 
-# --- CSS: Witruimte weg & Kleuren Knoppen ---
+# --- CSS: Layout & Kleuren ---
 st.markdown("""
     <style>
-    /* Witruimte bovenin weghalen */
+    /* Witruimte bovenin minimaliseren */
     .block-container {
-        padding-top: 1rem;
+        padding-top: 0.5rem;
         padding-bottom: 0rem;
     }
     /* Menu's verbergen */
@@ -25,8 +24,8 @@ st.markdown("""
     header {visibility: hidden;}
     
     /* Gekleurde knoppen */
-    div.stButton > button[key="real_del_btn"] { background-color: #28a745; color: white; }
-    div.stButton > button[key="cancel_del_btn"] { background-color: #dc3545; color: white; }
+    div.stButton > button[key="real_del_btn"] { background-color: #28a745; color: white; border-radius: 5px; height: 50px; width: 100%; }
+    div.stButton > button[key="cancel_del_btn"] { background-color: #dc3545; color: white; border-radius: 5px; height: 50px; width: 100%; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -34,12 +33,12 @@ st.markdown("""
 def get_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
-def clean_aantal(val):
-    """Zorgt dat aantallen altijd hele cijfers zijn (geen 5.0 maar 5)"""
+def clean_int(val):
+    """Zorgt dat waarden altijd hele cijfers zijn (geen 5.0 maar 5)"""
     try:
-        if pd.isna(val) or val == "":
+        if pd.isna(val) or str(val).strip() == "":
             return ""
-        # Eerst naar float voor het geval het "5.0" is, dan naar int
+        # Eerst naar float (voor '15.0'), dan naar int, dan naar string
         getal = float(str(val).replace(',', '.'))
         return str(int(getal))
     except:
@@ -54,7 +53,6 @@ def laad_data():
     except:
         return pd.DataFrame(columns=["ID"] + ZICHTBARE_KOLOMMEN)
 
-    # Zorg dat ID bestaat
     if "ID" not in df.columns:
         df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
     
@@ -63,8 +61,10 @@ def laad_data():
         if col not in df.columns:
             df[col] = ""
 
-    # Specifieke schoonmaak voor Aantal (geen decimalen)
-    df["Aantal"] = df["Aantal"].apply(clean_aantal)
+    # Opschonen van cijfers (Aantal én Spouw)
+    for col in ["Aantal", "Spouw"]:
+        if col in df.columns:
+            df[col] = df[col].apply(clean_int)
             
     return df[["ID"] + ZICHTBARE_KOLOMMEN].fillna("").astype(str)
 
@@ -98,14 +98,14 @@ df = laad_data()
 # 1. Sidebar (Import)
 with st.sidebar:
     st.header("📥 Import")
-    uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Excel bestand (.xlsx)", type=["xlsx"])
     if uploaded_file:
         try:
             if st.button("Bevestig Upload"):
                 nieuwe_data = pd.read_excel(uploaded_file)
-                # Kolomnamen schoonmaken
                 nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
-                # Mapping voor bekende variaties
+                
+                # Mapping
                 mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
                 nieuwe_data = nieuwe_data.rename(columns=mapping)
                 
@@ -113,9 +113,10 @@ with st.sidebar:
                 if "Locatie" not in nieuwe_data.columns:
                     nieuwe_data["Locatie"] = ""
                 
-                # Aantal opschonen voor opslaan
-                if "Aantal" in nieuwe_data.columns:
-                    nieuwe_data["Aantal"] = nieuwe_data["Aantal"].apply(clean_aantal)
+                # Opschonen cijfers in import
+                for col in ["Aantal", "Spouw"]:
+                    if col in nieuwe_data.columns:
+                        nieuwe_data[col] = nieuwe_data[col].apply(clean_int)
 
                 # Alleen relevante kolommen
                 for c in ZICHTBARE_KOLOMMEN:
@@ -129,20 +130,20 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Fout: {e}")
 
-# 2. Zoekbalk & Knoppen
+# 2. Zoeken & Knoppen
 col_search, col_buttons = st.columns([3, 1])
 with col_search:
-    zoekterm = st.text_input("🔍 Zoeken", placeholder="Type om te filteren...", label_visibility="collapsed")
+    zoekterm = st.text_input("🔍", placeholder="Zoek op order, afmeting...", label_visibility="collapsed")
 btn_place = col_buttons.empty()
 
 # 3. Tabel Configuratie
 gb = GridOptionsBuilder.from_dataframe(df)
-gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=15)
+gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=50) # Meer regels per pagina
 
 if zoekterm:
     gb.configure_grid_options(quickFilterText=zoekterm)
 
-# Algemene instellingen (Wrap text voor Samsung tablet)
+# Algemeen
 gb.configure_default_column(
     editable=False, 
     filterable=True, 
@@ -152,20 +153,25 @@ gb.configure_default_column(
     autoHeight=True
 )
 
-# --- KOLOM INSTELLINGEN ---
-# We gebruiken nu de standaard AgGrid checkbox selectie aan de linkerkant
-gb.configure_selection(selection_mode="multiple", use_checkbox=True)
-
-# Locatie bewerkbaar maken
-gb.configure_column("Locatie", editable=True, width=120, cellStyle={'backgroundColor': '#e6f3ff'})
+# --- KOLOMMEN ---
+# We zetten het vinkje nu expliciet op de Locatie kolom
+gb.configure_column("Locatie", 
+                    editable=True, 
+                    width=130, 
+                    checkboxSelection=True,  # HIER ZIT HET VINKJE NU
+                    headerCheckboxSelection=True,
+                    pinned='left', # Zet deze kolom vast aan de linkerkant
+                    cellStyle={'backgroundColor': '#e6f3ff'})
 
 # Smalle kolommen
 for col in ["Aantal", "Breedte", "Hoogte", "Spouw"]:
     gb.configure_column(col, width=80)
 
-# Brede kolommen
 gb.configure_column("Omschrijving", width=300)
 gb.configure_column("ID", hide=True)
+
+# Selectie aanzetten (belangrijk voor de delete knop)
+gb.configure_selection(selection_mode="multiple", use_checkbox=False) # Checkbox zit al op Locatie
 
 gridOptions = gb.build()
 
@@ -177,14 +183,13 @@ grid_response = AgGrid(
     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
     fit_columns_on_grid_load=True,
     theme='alpine',
-    height=500,
+    height=750, # HIER IS DE HOOGTE AANGEPAST
     allow_unsafe_jscode=True,
-    key='glas_grid' # Vaste sleutel voorkomt flikkeren
+    key='glas_grid_v2'
 )
 
 # Opslaan bij wijziging
 updated_df = grid_response['data']
-# Vergelijk strings om valse meldingen te voorkomen
 if not df.equals(updated_df):
     sla_data_op(updated_df)
     st.toast("Opgeslagen!")
@@ -192,7 +197,7 @@ if not df.equals(updated_df):
 # 4. Verwijder Logica
 selected_rows = grid_response['selected_rows']
 
-# Conversie voor zekerheid (soms is het een dataframe, soms een lijst)
+# Conversie fix
 if isinstance(selected_rows, pd.DataFrame):
     selected_rows = selected_rows.to_dict('records')
 elif selected_rows is None:
@@ -209,7 +214,7 @@ if len(selected_rows) > 0:
             with c1:
                 if st.button("JA", key="real_del_btn"):
                     ids_to_del = [r['ID'] for r in selected_rows]
-                    full_df = laad_data() # Haal verse data om conflicten te voorkomen
+                    full_df = laad_data()
                     new_df = full_df[~full_df['ID'].isin(ids_to_del)]
                     sla_data_op(new_df)
                     st.session_state.ask_del = False
