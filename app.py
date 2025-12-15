@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import uuid
+import time
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
@@ -9,7 +10,7 @@ DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: DESIGN & TABLET OPTIMALISATIE ---
+# --- CSS: DESIGN & OPTIMALISATIE ---
 st.markdown("""
     <style>
     /* Algemeen */
@@ -25,23 +26,24 @@ st.markdown("""
         background-color: #f1f3f4; padding: 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #ddd;
     }
 
-    /* Knoppen Algemeen */
+    /* Knoppen Styling */
     div.stButton > button { border-radius: 6px; height: 42px; font-weight: 600; border: none; }
     
-    /* Blauw (Zoek/Upload/Wijzig) */
+    /* Blauw (Acties) */
     div.stButton > button[key="search_btn"], 
     div.stButton > button[key="upload_btn"],
     div.stButton > button[key="bulk_update_btn"] { 
         background-color: #0d6efd; color: white; 
     }
     
-    /* Wit/Grijs (Wis) */
-    div.stButton > button[key="clear_btn"] { 
+    /* Wit/Rood (Wis/Annuleer) */
+    div.stButton > button[key="clear_btn"],
+    div.stButton > button[key="cancel_del_btn"] { 
         background-color: white; color: #dc3545; border: 1px solid #dc3545; 
     }
     
-    /* Rood (Verwijder Actie) */
-    div.stButton > button[key="header_del_btn"], div.stButton > button[key="cancel_del_btn"] {
+    /* Rood (Verwijder) */
+    div.stButton > button[key="header_del_btn"] {
         background-color: #dc3545; color: white;
     }
     
@@ -50,10 +52,10 @@ st.markdown("""
         background-color: #198754; color: white;
     }
 
-    /* Checkbox vergroten voor touch */
+    /* Checkbox vergroten */
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
 
-    /* VERBERG SIDEBAR OP TABLETS/MOBIEL (< 1024px) */
+    /* VERBERG SIDEBAR OP TABLETS (< 1024px) */
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
         [data-testid="collapsedControl"] { display: none !important; }
@@ -114,7 +116,6 @@ def bereken_unieke_orders(df):
 
 # --- AUTH ---
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
-
 if not st.session_state.ingelogd:
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
@@ -128,18 +129,17 @@ if not st.session_state.ingelogd:
                 st.error("Fout wachtwoord")
     st.stop()
 
-# --- INITIALISATIE ---
+# --- DATA INITIALISATIE ---
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
     st.session_state.mijn_data.insert(0, "Selecteer", False)
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (Desktop Only) ---
+# --- SIDEBAR (IMPORT) ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
-    
     if uploaded_file:
         st.info("Bestand herkend!")
         if st.button("📤 Toevoegen", key="upload_btn"):
@@ -154,27 +154,25 @@ with st.sidebar:
                 
                 for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
                     if col in nieuwe_data.columns: nieuwe_data[col] = nieuwe_data[col].apply(clean_int)
-                
                 for c in DATAKOLOMMEN:
                     if c not in nieuwe_data.columns: nieuwe_data[c] = ""
                 
                 final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
-                final_upload.insert(0, "Selecteer", False) 
+                final_upload.insert(0, "Selecteer", False)
                 
                 st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
                 sla_data_op(st.session_state.mijn_data)
-                
-                st.success(f"{len(final_upload)} regels toegevoegd!")
-                st.rerun() 
+                st.success(f"✅ {len(final_upload)} regels toegevoegd!")
+                time.sleep(1) # Even wachten zodat user bericht ziet
+                st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
-    
     st.markdown("---")
     if st.button("🔄 Data Herladen"):
         del st.session_state.mijn_data
         st.rerun()
 
-# --- KPI's ---
+# --- HEADER & KPI's ---
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
@@ -183,15 +181,20 @@ with c2:
     st.metric("Totaal Ruiten", tot)
 with c3: st.metric("Unieke Orders", bereken_unieke_orders(df))
 
-# --- ACTIEBALK LOGICA ---
+# --- SUCCES MELDING SYSTEEM ---
+if 'success_msg' in st.session_state and st.session_state.success_msg:
+    st.success(st.session_state.success_msg)
+    st.session_state.success_msg = "" # Reset na tonen
+
+# --- ACTIEBALK ---
+st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
+
 try:
-    # Check hoeveel rijen aangevinkt zijn
-    geselecteerde_indices = df[df["Selecteer"] == True].index
-    aantal_geselecteerd = len(geselecteerde_indices)
+    # Filter op vinkjes
+    geselecteerd_df = df[df["Selecteer"] == True]
+    aantal_geselecteerd = len(geselecteerd_df)
 except:
     aantal_geselecteerd = 0
-
-st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
     # FASE 3: BEVESTIGING VERWIJDEREN
@@ -199,10 +202,12 @@ if st.session_state.get('ask_del'):
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
         if st.button("✅ JA, Verwijderen", key="real_del_btn", use_container_width=True):
-            ids_weg = df.loc[geselecteerde_indices, "ID"].tolist()
+            ids_weg = geselecteerd_df["ID"].tolist()
+            # Verwijder op basis van ID (veiligste manier)
             st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
             sla_data_op(st.session_state.mijn_data)
             st.session_state.ask_del = False
+            st.session_state.success_msg = f"🗑️ {len(ids_weg)} regels verwijderd!"
             st.rerun()
     with col_nee:
         if st.button("❌ ANNULEER", key="cancel_del_btn", use_container_width=True):
@@ -210,11 +215,8 @@ if st.session_state.get('ask_del'):
             st.rerun()
 
 elif aantal_geselecteerd > 0:
-    # FASE 2: BULK ACTIES (VERWIJDEREN OF WIJZIGEN)
-    
-    # We gebruiken kolommen voor een nette indeling op tablet
-    # Layout: [Info Tekst] [Verwijder Knop] [Nieuwe Locatie Input] [Wijzig Knop]
-    c_info, c_del, c_input, c_update = st.columns([1.5, 1, 1.5, 1], gap="small", vertical_alignment="bottom")
+    # FASE 2: BULK ACTIES
+    c_info, c_del, c_input, c_update = st.columns([1.2, 1, 1.8, 1], gap="small", vertical_alignment="bottom")
     
     with c_info:
         st.markdown(f"✅ **{aantal_geselecteerd}** geselecteerd")
@@ -230,18 +232,24 @@ elif aantal_geselecteerd > 0:
     with c_update:
         if st.button("✏️ Wijzig", key="bulk_update_btn", use_container_width=True):
             if nieuwe_locatie:
-                # Update de locatie van alle geselecteerde regels
-                st.session_state.mijn_data.loc[geselecteerde_indices, "Locatie"] = nieuwe_locatie
-                # Sla op naar cloud
+                ids_te_wijzigen = geselecteerd_df["ID"].tolist()
+                
+                # Update de data op basis van ID (Veilig!)
+                masker = st.session_state.mijn_data["ID"].isin(ids_te_wijzigen)
+                st.session_state.mijn_data.loc[masker, "Locatie"] = nieuwe_locatie
+                
+                # Vinkjes uitzetten na wijzigen (Clean up)
+                st.session_state.mijn_data.loc[masker, "Selecteer"] = False
+                
                 sla_data_op(st.session_state.mijn_data)
-                # Selectie opheffen na wijziging? Nee, handiger om te laten staan voor controle.
-                # Wel herladen om wijziging te tonen
+                
+                st.session_state.success_msg = f"✅ Locatie van {len(ids_te_wijzigen)} regels gewijzigd naar '{nieuwe_locatie}'!"
                 st.rerun()
             else:
-                st.toast("Vul eerst een locatie in!", icon="⚠️")
+                st.warning("Vul eerst een locatie in.")
 
 else:
-    # FASE 1: STANDAARD ZOEKBALK
+    # FASE 1: ZOEKEN
     c_in, c_zo, c_wi = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
     with c_in:
         zoekterm = st.text_input("Zoek", placeholder="🔍 Typ order, maat of locatie...", label_visibility="collapsed", key="zoek_input")
@@ -278,7 +286,7 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- UPDATE LOGICA ---
+# --- UPDATE SYNC (CRUCIAAL) ---
 if not edited_df.equals(view_df):
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
