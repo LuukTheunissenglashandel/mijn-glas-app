@@ -10,7 +10,7 @@ DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: DESIGN & OPTIMALISATIE ---
+# --- CSS: PRO DESIGN & ANTI-FLASH ---
 st.markdown("""
     <style>
     /* Algemeen */
@@ -18,18 +18,10 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Cards & Balken */
-    div[data-testid="stMetric"] {
-        background-color: #fff; border: 1px solid #e0e0e0; padding: 10px; border-radius: 8px;
-    }
-    .actie-balk {
-        background-color: #f1f3f4; padding: 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #ddd;
-    }
-
     /* Knoppen Styling */
-    div.stButton > button { border-radius: 6px; height: 42px; font-weight: 600; border: none; }
+    div.stButton > button { border-radius: 6px; height: 42px; font-weight: 600; border: none; transition: 0.2s; }
     
-    /* Blauw (Acties) */
+    /* Primaire Actie (Blauw) */
     div.stButton > button[key="search_btn"], 
     div.stButton > button[key="upload_btn"],
     div.stButton > button[key="bulk_update_btn"],
@@ -37,27 +29,35 @@ st.markdown("""
         background-color: #0d6efd; color: white; 
     }
     
-    /* Wit/Rood (Wis/Annuleer/Deselecteer) */
+    /* Secundair (Wit/Grijs) */
     div.stButton > button[key="clear_btn"],
-    div.stButton > button[key="cancel_del_btn"],
     div.stButton > button[key="deselect_btn"] { 
-        background-color: white; color: #dc3545; border: 1px solid #dc3545; 
+        background-color: white; color: #495057; border: 1px solid #ced4da; 
     }
     
-    /* Rood (Verwijder) */
-    div.stButton > button[key="header_del_btn"] {
+    /* Gevaar (Rood) */
+    div.stButton > button[key="header_del_btn"], div.stButton > button[key="cancel_del_btn"] {
         background-color: #dc3545; color: white;
     }
     
-    /* Groen (Bevestig) */
+    /* Succes (Groen) */
     div.stButton > button[key="real_del_btn"] {
         background-color: #198754; color: white;
+    }
+
+    /* Actiebalk Container */
+    .actie-container {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 15px;
     }
 
     /* Checkbox vergroten */
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
 
-    /* VERBERG SIDEBAR OP TABLETS (< 1024px) */
+    /* TABLET TWEAKS: Verberg sidebar op kleine schermen */
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
         [data-testid="collapsedControl"] { display: none !important; }
@@ -188,14 +188,16 @@ if 'success_msg' in st.session_state and st.session_state.success_msg:
     st.success(st.session_state.success_msg)
     st.session_state.success_msg = "" 
 
-# --- ACTIEBALK LOGICA & WEERGAVE ---
-st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
-
+# --- STATUS BEPALING ---
 try:
     geselecteerd_df = df[df["Selecteer"] == True]
     aantal_geselecteerd = len(geselecteerd_df)
 except:
     aantal_geselecteerd = 0
+
+# --- SLIMME BALK BOVENAAN ---
+# Hier bepalen we wat we tonen: Zoekbalk OF Actie-menu
+st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
     # FASE 3: BEVESTIGING
@@ -215,50 +217,51 @@ if st.session_state.get('ask_del'):
             st.rerun()
 
 elif aantal_geselecteerd > 0:
-    # FASE 2: BULK ACTIES
-    # Layout: [Info + Deselect] [Verwijder] [Input] [Wijzig]
-    c_info, c_del, c_input, c_update = st.columns([1.5, 1, 1.5, 1], gap="small", vertical_alignment="bottom")
+    # FASE 2: ACTIE MODUS (ER IS GESELECTEERD)
     
-    with c_info:
-        col_inf_txt, col_inf_btn = st.columns([1, 1])
-        with col_inf_txt:
-            st.markdown(f"✅ **{aantal_geselecteerd}** geselecteerd")
-        with col_inf_btn:
-             if st.button("❌ Deselecteer", key="deselect_btn", use_container_width=True):
-                 st.session_state.mijn_data["Selecteer"] = False
-                 sla_data_op(st.session_state.mijn_data)
-                 st.rerun()
+    # Toggle: Wat wil je zien?
+    col_view, col_actions = st.columns([2, 5])
+    
+    with col_view:
+        # Dit lost je vraag op: "Alleen die rijen zichtbaar blijven"
+        filter_mode = st.radio("Toon:", ["Alles", f"Geselecteerd ({aantal_geselecteerd})"], 
+                               horizontal=True, label_visibility="collapsed")
 
-    with c_del:
-        if st.button("🗑️ Verwijder", key="header_del_btn", use_container_width=True):
-            st.session_state.ask_del = True
-            st.rerun()
-            
-    with c_input:
-        nieuwe_locatie = st.text_input("Nieuwe Locatie", placeholder="Bijv. Bok 12", label_visibility="collapsed", key="bulk_loc_input")
+    with col_actions:
+        # Layout: [Deselect] [Nieuwe Locatie] [Wijzig] [Verwijder]
+        c_des, c_inp, c_upd, c_del = st.columns([1, 2, 1, 1], gap="small")
         
-    with c_update:
-        if st.button("✏️ Wijzig", key="bulk_update_btn", use_container_width=True):
-            if nieuwe_locatie:
-                ids_te_wijzigen = geselecteerd_df["ID"].tolist()
-                masker = st.session_state.mijn_data["ID"].isin(ids_te_wijzigen)
-                st.session_state.mijn_data.loc[masker, "Locatie"] = nieuwe_locatie
-                st.session_state.mijn_data.loc[masker, "Selecteer"] = False # Auto deselect na wijziging
-                sla_data_op(st.session_state.mijn_data)
-                st.session_state.success_msg = f"✅ Locatie van {len(ids_te_wijzigen)} regels gewijzigd naar '{nieuwe_locatie}'!"
+        with c_des:
+             if st.button("❌ Wis", key="deselect_btn", help="Selectie wissen", use_container_width=True):
+                 st.session_state.mijn_data["Selecteer"] = False
+                 st.rerun()
+        
+        with c_inp:
+            nieuwe_locatie = st.text_input("Nieuwe Locatie", placeholder="Naar locatie...", label_visibility="collapsed", key="bulk_loc_input")
+            
+        with c_upd:
+            if st.button("✏️ Wijzig", key="bulk_update_btn", use_container_width=True):
+                if nieuwe_locatie:
+                    ids_te_wijzigen = geselecteerd_df["ID"].tolist()
+                    masker = st.session_state.mijn_data["ID"].isin(ids_te_wijzigen)
+                    st.session_state.mijn_data.loc[masker, "Locatie"] = nieuwe_locatie
+                    st.session_state.mijn_data.loc[masker, "Selecteer"] = False
+                    sla_data_op(st.session_state.mijn_data)
+                    st.session_state.success_msg = f"✅ {len(ids_te_wijzigen)} ruiten verplaatst naar '{nieuwe_locatie}'"
+                    st.rerun()
+                else:
+                    st.toast("Vul eerst een locatie in", icon="⚠️")
+        
+        with c_del:
+            if st.button("🗑️ Weg", key="header_del_btn", help="Verwijderen", use_container_width=True):
+                st.session_state.ask_del = True
                 st.rerun()
-            else:
-                st.warning("Vul eerst een locatie in.")
 
 else:
-    # FASE 1: ZOEKEN & SELECTEREN
-    # Eerst berekenen we view_df om te weten wat 'alles' is
-    temp_view_df = df.copy()
-    temp_zoek = st.session_state.get("zoek_input", "")
-    if temp_zoek:
-        mask = temp_view_df.astype(str).apply(lambda x: x.str.contains(temp_zoek, case=False)).any(axis=1)
-        temp_view_df = temp_view_df[mask]
-
+    # FASE 1: ZOEK MODUS
+    filter_mode = "Alles" # Standaard als niks geselecteerd is
+    
+    # Zoeken + Alles Selecteren
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 1.5], gap="small", vertical_alignment="bottom")
     
     with c_in:
@@ -268,21 +271,35 @@ else:
     with c_wi:
         st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
     with c_all:
-        if st.button(f"✅ Alles ({len(temp_view_df)})", key="select_all_btn", help="Selecteer alle zichtbare regels", use_container_width=True):
-            # Selecteer alle zichtbare ID's
-            visible_ids = temp_view_df["ID"].tolist()
+        if st.button("✅ Alles Selecteren", key="select_all_btn", use_container_width=True):
+            # We moeten weten wat 'alles' is (rekening houdend met zoekfilter)
+            temp_view = df.copy()
+            if zoekterm:
+                mask = temp_view.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+                temp_view = temp_view[mask]
+            
+            visible_ids = temp_view["ID"].tolist()
+            # Update sessie state
             st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(visible_ids), "Selecteer"] = True
-            sla_data_op(st.session_state.mijn_data)
             st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- TABEL ---
-view_df = df.copy() 
-if aantal_geselecteerd == 0 and zoekterm:
-    mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
-    view_df = view_df[mask]
+# --- TABEL LOGICA ---
+view_df = df.copy()
 
+# Filter logic
+if "Geselecteerd" in str(filter_mode) and aantal_geselecteerd > 0:
+    # Toon ALLEEN geselecteerd
+    view_df = view_df[view_df["Selecteer"] == True]
+else:
+    # Toon zoekresultaten (of alles)
+    if aantal_geselecteerd == 0 and st.session_state.get("zoek_input"):
+        zoekterm = st.session_state.get("zoek_input")
+        mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+        view_df = view_df[mask]
+
+# De Editor
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -303,8 +320,10 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- UPDATE SYNC ---
+# --- ANTI-FLASH UPDATE SYNC ---
+# We slaan NIET op naar cloud bij vinkjes zetten. Alleen naar geheugen.
 if not edited_df.equals(view_df):
     st.session_state.mijn_data.update(edited_df)
-    sla_data_op(st.session_state.mijn_data)
+    # Let op: GEEN sla_data_op() hier! Dat is de fix voor het flitsen.
+    # We slaan pas op als je op een actieknop klikt.
     st.rerun()
