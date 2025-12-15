@@ -32,13 +32,15 @@ st.markdown("""
     /* Blauw (Acties) */
     div.stButton > button[key="search_btn"], 
     div.stButton > button[key="upload_btn"],
-    div.stButton > button[key="bulk_update_btn"] { 
+    div.stButton > button[key="bulk_update_btn"],
+    div.stButton > button[key="select_all_btn"] { 
         background-color: #0d6efd; color: white; 
     }
     
-    /* Wit/Rood (Wis/Annuleer) */
+    /* Wit/Rood (Wis/Annuleer/Deselecteer) */
     div.stButton > button[key="clear_btn"],
-    div.stButton > button[key="cancel_del_btn"] { 
+    div.stButton > button[key="cancel_del_btn"],
+    div.stButton > button[key="deselect_btn"] { 
         background-color: white; color: #dc3545; border: 1px solid #dc3545; 
     }
     
@@ -163,7 +165,7 @@ with st.sidebar:
                 st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
                 sla_data_op(st.session_state.mijn_data)
                 st.success(f"✅ {len(final_upload)} regels toegevoegd!")
-                time.sleep(1) # Even wachten zodat user bericht ziet
+                time.sleep(1)
                 st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
@@ -181,29 +183,27 @@ with c2:
     st.metric("Totaal Ruiten", tot)
 with c3: st.metric("Unieke Orders", bereken_unieke_orders(df))
 
-# --- SUCCES MELDING SYSTEEM ---
+# --- SUCCES MELDING ---
 if 'success_msg' in st.session_state and st.session_state.success_msg:
     st.success(st.session_state.success_msg)
-    st.session_state.success_msg = "" # Reset na tonen
+    st.session_state.success_msg = "" 
 
-# --- ACTIEBALK ---
+# --- ACTIEBALK LOGICA & WEERGAVE ---
 st.markdown('<div class="actie-balk">', unsafe_allow_html=True)
 
 try:
-    # Filter op vinkjes
     geselecteerd_df = df[df["Selecteer"] == True]
     aantal_geselecteerd = len(geselecteerd_df)
 except:
     aantal_geselecteerd = 0
 
 if st.session_state.get('ask_del'):
-    # FASE 3: BEVESTIGING VERWIJDEREN
+    # FASE 3: BEVESTIGING
     st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels wilt verwijderen?**")
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
         if st.button("✅ JA, Verwijderen", key="real_del_btn", use_container_width=True):
             ids_weg = geselecteerd_df["ID"].tolist()
-            # Verwijder op basis van ID (veiligste manier)
             st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
             sla_data_op(st.session_state.mijn_data)
             st.session_state.ask_del = False
@@ -216,11 +216,19 @@ if st.session_state.get('ask_del'):
 
 elif aantal_geselecteerd > 0:
     # FASE 2: BULK ACTIES
-    c_info, c_del, c_input, c_update = st.columns([1.2, 1, 1.8, 1], gap="small", vertical_alignment="bottom")
+    # Layout: [Info + Deselect] [Verwijder] [Input] [Wijzig]
+    c_info, c_del, c_input, c_update = st.columns([1.5, 1, 1.5, 1], gap="small", vertical_alignment="bottom")
     
     with c_info:
-        st.markdown(f"✅ **{aantal_geselecteerd}** geselecteerd")
-        
+        col_inf_txt, col_inf_btn = st.columns([1, 1])
+        with col_inf_txt:
+            st.markdown(f"✅ **{aantal_geselecteerd}** geselecteerd")
+        with col_inf_btn:
+             if st.button("❌ Deselecteer", key="deselect_btn", use_container_width=True):
+                 st.session_state.mijn_data["Selecteer"] = False
+                 sla_data_op(st.session_state.mijn_data)
+                 st.rerun()
+
     with c_del:
         if st.button("🗑️ Verwijder", key="header_del_btn", use_container_width=True):
             st.session_state.ask_del = True
@@ -233,30 +241,39 @@ elif aantal_geselecteerd > 0:
         if st.button("✏️ Wijzig", key="bulk_update_btn", use_container_width=True):
             if nieuwe_locatie:
                 ids_te_wijzigen = geselecteerd_df["ID"].tolist()
-                
-                # Update de data op basis van ID (Veilig!)
                 masker = st.session_state.mijn_data["ID"].isin(ids_te_wijzigen)
                 st.session_state.mijn_data.loc[masker, "Locatie"] = nieuwe_locatie
-                
-                # Vinkjes uitzetten na wijzigen (Clean up)
-                st.session_state.mijn_data.loc[masker, "Selecteer"] = False
-                
+                st.session_state.mijn_data.loc[masker, "Selecteer"] = False # Auto deselect na wijziging
                 sla_data_op(st.session_state.mijn_data)
-                
                 st.session_state.success_msg = f"✅ Locatie van {len(ids_te_wijzigen)} regels gewijzigd naar '{nieuwe_locatie}'!"
                 st.rerun()
             else:
                 st.warning("Vul eerst een locatie in.")
 
 else:
-    # FASE 1: ZOEKEN
-    c_in, c_zo, c_wi = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
+    # FASE 1: ZOEKEN & SELECTEREN
+    # Eerst berekenen we view_df om te weten wat 'alles' is
+    temp_view_df = df.copy()
+    temp_zoek = st.session_state.get("zoek_input", "")
+    if temp_zoek:
+        mask = temp_view_df.astype(str).apply(lambda x: x.str.contains(temp_zoek, case=False)).any(axis=1)
+        temp_view_df = temp_view_df[mask]
+
+    c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 1.5], gap="small", vertical_alignment="bottom")
+    
     with c_in:
         zoekterm = st.text_input("Zoek", placeholder="🔍 Typ order, maat of locatie...", label_visibility="collapsed", key="zoek_input")
     with c_zo:
         st.button("🔍", key="search_btn", use_container_width=True)
     with c_wi:
         st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
+    with c_all:
+        if st.button(f"✅ Alles ({len(temp_view_df)})", key="select_all_btn", help="Selecteer alle zichtbare regels", use_container_width=True):
+            # Selecteer alle zichtbare ID's
+            visible_ids = temp_view_df["ID"].tolist()
+            st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(visible_ids), "Selecteer"] = True
+            sla_data_op(st.session_state.mijn_data)
+            st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -286,7 +303,7 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- UPDATE SYNC (CRUCIAAL) ---
+# --- UPDATE SYNC ---
 if not edited_df.equals(view_df):
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
