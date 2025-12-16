@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import uuid
 import time
+import re
+import pdfplumber
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
@@ -43,7 +45,7 @@ st.markdown("""
         background-color: #0d6efd; color: white; 
     }
     
-    /* Locatie Wijzigen (Oranje/Geel tint voor modificatie of Blauw) */
+    /* Locatie Wijzigen (Blauw) */
     div.stButton > button[key="bulk_update_btn"] { 
         background-color: #0d6efd; color: white; 
     }
@@ -80,6 +82,7 @@ st.markdown("""
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
     /* VERBERG SIDEBAR OP TABLETS (< 1024px) */
+    /* Hierdoor zijn Excel EN PDF upload alleen op desktop zichtbaar */
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
         [data-testid="collapsedControl"] { display: none !important; }
@@ -138,6 +141,47 @@ def bereken_unieke_orders(df):
     except:
         return 0
 
+# --- NIEUWE FUNCTIE: PDF PARSER ---
+def parse_racklisten_pdf(uploaded_file):
+    data = []
+    # pdfplumber opent het bestand direct uit het geheugen
+    with pdfplumber.open(uploaded_file) as pdf:
+        current_location = ""
+        
+        for page in pdf.pages:
+            text = page.extract_text()
+            if not text: continue
+            
+            # 1. Locatie zoeken (Gestell nummer, laatste 4 cijfers)
+            gestell_match = re.search(r"Gestell:\s*[\d-]*(\d{4})[-]*", text)
+            if gestell_match:
+                current_location = gestell_match.group(1)
+            
+            lines = text.split('\n')
+            for line in lines:
+                # 2. Glasregels zoeken (Order/Pos, Aantal, Breedte, Hoogte)
+                # Regex zoekt naar: 1234/1  2  1000  2000 (met variaties in spaties/sterretjes)
+                match = re.search(r"(\d+/\d+)\s+(\d+)\s+(\d{3,4})\s*[\*x]?\s*(\d{3,4})", line)
+                if match:
+                    order_pos = match.group(1)
+                    aantal = match.group(2)
+                    breedte = match.group(3)
+                    hoogte = match.group(4)
+                    
+                    # Probeer info/ref te pakken (tekst achter de hoogte)
+                    rest_of_line = line.split(hoogte, 1)[1].strip() if len(line.split(hoogte, 1)) > 1 else ""
+                    
+                    data.append({
+                        "Locatie": current_location,
+                        "Order": order_pos,
+                        "Aantal": aantal,
+                        "Breedte": breedte,
+                        "Hoogte": hoogte,
+                        "Omschrijving": rest_of_line,
+                        "Spouw": "" # Staat niet in deze PDF lijst
+                    })
+    return pd.DataFrame(data)
+
 # --- AUTH ---
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if not st.session_state.ingelogd:
@@ -160,15 +204,15 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (IMPORT) ---
+# --- SIDEBAR (IMPORT) - ALLEEN ZICHTBAAR OP DESKTOP ---
 with st.sidebar:
+    # 1. EXCEL IMPORT
     st.subheader("📥 Excel Import")
-    uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
-    if uploaded_file:
-        st.info("Bestand herkend")
-        if st.button("📤 Toevoegen aan voorraad", key="upload_btn"):
+    uploaded_excel = st.file_uploader("Excel kiezen", type=["xlsx"], label_visibility="collapsed", key="u_excel")
+    if uploaded_excel:
+        if st.button("📤 Excel toevoegen", key="upload_excel_btn"):
             try:
-                nieuwe_data = pd.read_excel(uploaded_file)
+                nieuwe_data = pd.read_excel(uploaded_excel)
                 nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
                 mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
                 nieuwe_data = nieuwe_data.rename(columns=mapping)
@@ -191,6 +235,41 @@ with st.sidebar:
                 st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
+
+    st.markdown("---")
+
+    # 2. PDF IMPORT (NIEUW - OOK ALLEEN DESKTOP)
+    st.subheader("📄 PDF Rackliste Import")
+    uploaded_pdf = st.file_uploader("PDF kiezen", type=["pdf"], label_visibility="collapsed", key="u_pdf")
+    if uploaded_pdf:
+        if st.button("📤 PDF verwerken & toevoegen", key="upload_pdf_btn"):
+            try:
+                pdf_data = parse_racklisten_pdf(uploaded_pdf)
+                if not pdf_data.empty:
+                    # Data gereedmaken
+                    pdf_data["ID"] = [str(uuid.uuid4()) for _ in range(len(pdf_data))]
+                    
+                    # Ontbrekende kolommen vullen
+                    for c in DATAKOLOMMEN:
+                        if c not in pdf_data.columns: pdf_data[c] = ""
+                    
+                    # Netjes maken (integers van floats maken)
+                    for col in ["Aantal", "Breedte", "Hoogte"]:
+                        pdf_data[col] = pdf_data[col].apply(clean_int)
+                        
+                    final_pdf = pdf_data[["ID"] + DATAKOLOMMEN].astype(str)
+                    final_pdf.insert(0, "Selecteer", False)
+                    
+                    st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_pdf], ignore_index=True)
+                    sla_data_op(st.session_state.mijn_data)
+                    st.success(f"✅ {len(final_pdf)} ruiten uit PDF toegevoegd!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("Geen bruikbare data gevonden in deze PDF.")
+            except Exception as e:
+                st.error(f"Fout bij PDF verwerking: {e}")
+
     st.markdown("---")
     if st.button("🔄 Data Herladen"):
         del st.session_state.mijn_data
@@ -240,7 +319,6 @@ if st.session_state.get('ask_del'):
 elif aantal_geselecteerd > 0:
     # FASE 2: ACTIEMODUS (Vinkjes staan aan)
     
-    # Gebruik kolommen om dingen netjes naast elkaar te zetten
     # Layout: [Selectie Info]  [ --- Locatie Wijziging --- ]  [Uit Voorraad]
     col_sel, col_loc, col_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
 
@@ -251,7 +329,7 @@ elif aantal_geselecteerd > 0:
             st.session_state.mijn_data["Selecteer"] = False
             st.rerun()
 
-    # 2. Locatie Wijzigen (Visueel gekoppeld)
+    # 2. Locatie Wijzigen
     with col_loc:
         c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
         with c_inp:
@@ -271,7 +349,6 @@ elif aantal_geselecteerd > 0:
 
     # 3. Uit Voorraad Melden
     with col_out:
-        # Witruimte boven knop om hem op 1 lijn te krijgen met input veld
         st.write("") 
         if st.button("📦 Uit voorraad melden", key="header_del_btn", use_container_width=True):
             st.session_state.ask_del = True
@@ -303,7 +380,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # --- TABEL ---
 view_df = df.copy()
 
-# Focus Mode: Als er selectie is, toon optie om alleen selectie te zien
+# Focus Mode
 if aantal_geselecteerd > 0:
     st.caption("Weergave opties:")
     filter_mode = st.radio("Toon:", ["Alles", f"Alleen Selectie ({aantal_geselecteerd})"], 
@@ -311,12 +388,10 @@ if aantal_geselecteerd > 0:
     if "Alleen Selectie" in filter_mode:
         view_df = view_df[view_df["Selecteer"] == True]
     elif st.session_state.get("zoek_input"):
-         # Als we 'Alles' tonen maar er is nog een zoekterm
          zoekterm = st.session_state.get("zoek_input")
          mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
          view_df = view_df[mask]
 else:
-    # Standaard zoek filter
     if st.session_state.get("zoek_input"):
         zoekterm = st.session_state.get("zoek_input")
         mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
