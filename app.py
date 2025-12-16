@@ -12,7 +12,7 @@ DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: PROFESSIONAL DESIGN ---
+# --- CSS: DESIGN & RESPONSIVENESS ---
 st.markdown("""
     <style>
     /* 1. Algemene Layout */
@@ -67,7 +67,8 @@ st.markdown("""
     /* Checkbox vergroten */
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
-    /* VERBERG SIDEBAR OP TABLETS (< 1024px) */
+    /* VERBERG SIDEBAR OP TABLETS & MOBIEL (< 1024px) */
+    /* Hierdoor zijn Excel EN PDF upload alleen op desktop zichtbaar */
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
         [data-testid="collapsedControl"] { display: none !important; }
@@ -82,7 +83,6 @@ def get_connection():
 def clean_int(val):
     try:
         if val is None or str(val).strip() == "": return ""
-        # Vervang komma door punt en rond af
         s_val = str(val).replace(',', '.').strip()
         return str(int(float(s_val)))
     except:
@@ -127,82 +127,77 @@ def bereken_unieke_orders(df):
     except:
         return 0
 
-# --- SLIMME PDF PARSER (MET LOCATIE FIX) ---
+# --- SLIMME PDF PARSER (MULTILINE & LOCATIE) ---
 def parse_racklisten_pdf(uploaded_file):
     data = []
     
-    # pdfplumber openen
     with pdfplumber.open(uploaded_file) as pdf:
-        
-        # Dit houdt de locatie bij terwijl we door het bestand "lezen"
-        # We beginnen leeg
-        huidige_locatie_nummer = ""
-        
         for page in pdf.pages:
-            # layout=True zorgt dat we regel voor regel van boven naar beneden lezen
-            # Dit is cruciaal om eerst de header (Gestell) te zien en dan pas de regels
-            text = page.extract_text(layout=True, x_tolerance=2)
-            
+            # We halen alle tekst op. layout=True is niet nodig omdat we zelf slim zoeken
+            text = page.extract_text()
             if not text: continue
             
-            lines = text.split('\n')
+            # 1. Locatie (Gestell) zoeken op de pagina
+            # We zoeken naar "Gestell: .... 1234" en pakken de laatste 4 cijfers
+            huidige_locatie = ""
+            gestell_match = re.search(r"(?i)Gestell\s*:\s*[\d-]*(\d{4})", text)
+            if gestell_match:
+                huidige_locatie = gestell_match.group(1)
             
-            for line in lines:
-                line = line.strip()
+            # 2. Glasregels zoeken (Order/Pos ... Aantal ... Breedte ... Hoogte)
+            # re.DOTALL zorgt dat '.' ook nieuwe regels matcht.
+            # \s+ matcht spaties EN enters. Dit is de sleutel tot succes.
+            
+            # Patroon:
+            # (\d{6,}\s*/\s*\d+)    -> Order/Pos (min 6 cijfers, slash, cijfer)
+            # \s+                   -> Witruimte/Enters
+            # (\d+)                 -> Aantal
+            # \s+                   -> Witruimte
+            # (\d{3,4})             -> Breedte
+            # \s*[\*x]?\s* -> Optioneel * of x tussen maten
+            # (\d{3,4})             -> Hoogte
+            
+            pattern = re.compile(r"(\d{6,}\s*/\s*\d+)\s+(\d+)\s+(\d{3,4})\s*[\*x]?\s*(\d{3,4})", re.DOTALL)
+            
+            for m in pattern.finditer(text):
+                order_pos = m.group(1).replace(" ", "") # Spaties uit order halen
+                aantal = m.group(2)
+                breedte = m.group(3)
+                hoogte = m.group(4)
                 
-                # STAP 1: Check of deze regel een Gestell nummer bevat
-                # We zoeken naar "Gestell" gevolgd door cijfers
-                if "Gestell" in line:
-                    # Regex om het nummer te vinden. Bijv: "Gestell: 0000203762-"
-                    gestell_match = re.search(r"Gestell.*(\d{4,})", line)
-                    if gestell_match:
-                        volledig_nummer = gestell_match.group(1)
-                        # We pakken de LAATSTE 4 cijfers
-                        huidige_locatie_nummer = volledig_nummer[-4:]
-                    continue # Ga naar de volgende regel, dit is geen glas-data
-
-                # STAP 2: Check of deze regel glas-data is
-                # We zoeken naar het patroon: Order/Pos Aantal Breedte Hoogte
-                # Bijv: "1398617/4 2 1382 1524" of "1398617/21 1 996 * 741"
+                # 3. Omschrijving zoeken (tekst NA de hoogte)
+                omschrijving = ""
+                # We kijken naar de tekst die direct volgt op de match
+                # m.end() is het punt waar de hoogte stopt
+                rest_context = text[m.end():m.end()+150] # Pak ruim context
                 
-                # Regex uitleg:
-                # (\d+/\d+)   -> Order/Pos (123/4)
-                # \s+(\d+)    -> Spatie + Aantal (2)
-                # \s+(\d{3,4}) -> Spatie + Breedte (3 of 4 cijfers)
-                # \s*[\*x]?\s* -> Spatie, optioneel * of x, spatie
-                # (\d{3,4})   -> Hoogte (3 of 4 cijfers)
-                match = re.search(r"(\d+/\d+)\s+(\d+)\s+(\d{3,4})\s*[\*x]?\s*(\d{3,4})", line)
+                # Split op regels en pak de eerste regel die tekst bevat
+                lines_after = rest_context.split('\n')
+                for line in lines_after:
+                    line = line.strip()
+                    if line: # Als de regel niet leeg is
+                        # Filter de '0' die vaak in de PDF staat weg
+                        if line == "0" or line == "0.0":
+                            continue # Dit is geen omschrijving, ga naar volgende regel
+                        
+                        clean_line = line
+                        if clean_line.startswith("0 "):
+                            clean_line = clean_line[2:].strip()
+                        
+                        # Als we nu iets zinnigs hebben, is dit de omschrijving
+                        if clean_line and not clean_line.replace('.','').isdigit():
+                             omschrijving = clean_line
+                             break # Gevonden! Stop met zoeken
                 
-                if match:
-                    # We hebben een match!
-                    order_pos = match.group(1)
-                    aantal = match.group(2)
-                    breedte = match.group(3)
-                    hoogte = match.group(4)
-                    
-                    # Probeer de omschrijving te pakken (alles achter de hoogte)
-                    omschrijving = ""
-                    try:
-                        # Split op de hoogte en pak wat er achter staat
-                        parts = line.split(str(hoogte))
-                        if len(parts) > 1:
-                            omschrijving = parts[-1].strip()
-                            # Veel regels beginnen met "0 " of "0.0" na de maten, die halen we weg
-                            if omschrijving.startswith("0 ") or omschrijving.startswith("0.0"):
-                                omschrijving = omschrijving.replace("0 ", "", 1).replace("0.0", "", 1).strip()
-                    except:
-                        pass
-
-                    # Voeg toe aan de lijst MET de huidige locatie
-                    data.append({
-                        "Locatie": huidige_locatie_nummer, # Hier gebruiken we de gevonden Gestell code
-                        "Order": order_pos,
-                        "Aantal": aantal,
-                        "Breedte": breedte,
-                        "Hoogte": hoogte,
-                        "Omschrijving": omschrijving,
-                        "Spouw": "" 
-                    })
+                data.append({
+                    "Locatie": huidige_locatie,
+                    "Order": order_pos,
+                    "Aantal": aantal,
+                    "Breedte": breedte,
+                    "Hoogte": hoogte,
+                    "Omschrijving": omschrijving,
+                    "Spouw": "" 
+                })
                     
     return pd.DataFrame(data)
 
@@ -277,7 +272,7 @@ with st.sidebar:
                     for c in DATAKOLOMMEN:
                         if c not in pdf_data.columns: pdf_data[c] = ""
                     
-                    # Netjes maken (integers van floats maken)
+                    # Formatting
                     for col in ["Aantal", "Breedte", "Hoogte"]:
                         pdf_data[col] = pdf_data[col].apply(clean_int)
                         
@@ -290,7 +285,7 @@ with st.sidebar:
                     time.sleep(1)
                     st.rerun()
                 else:
-                    st.warning("Geen bruikbare data gevonden. Controleer of de PDF leesbare tekst bevat.")
+                    st.warning("Geen geschikte data gevonden in PDF.")
             except Exception as e:
                 st.error(f"Fout bij PDF verwerking: {e}")
 
