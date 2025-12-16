@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import uuid
 import time
-import re
-import pdfplumber
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
@@ -12,7 +10,7 @@ DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: DESIGN & RESPONSIVENESS ---
+# --- CSS: PROFESSIONAL DESIGN ---
 st.markdown("""
     <style>
     /* 1. Algemene Layout */
@@ -20,7 +18,7 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* 2. Actie Container */
+    /* 2. Actie Container (Witte balk met schaduw) */
     .actie-container {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -39,22 +37,36 @@ st.markdown("""
         transition: all 0.2s ease-in-out;
     }
     
+    /* Zoeken & Selecteren (Blauw) */
     div.stButton > button[key="search_btn"], 
-    div.stButton > button[key="select_all_btn"],
+    div.stButton > button[key="select_all_btn"] { 
+        background-color: #0d6efd; color: white; 
+    }
+    
+    /* Locatie Wijzigen (Oranje/Geel tint voor modificatie of Blauw) */
     div.stButton > button[key="bulk_update_btn"] { 
         background-color: #0d6efd; color: white; 
     }
 
+    /* Secundair (Grijs/Wit) */
     div.stButton > button[key="clear_btn"],
     div.stButton > button[key="deselect_btn"], 
     div.stButton > button[key="cancel_del_btn"] { 
         background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; 
     }
+    div.stButton > button[key="deselect_btn"]:hover {
+        background-color: #e2e6ea;
+    }
     
+    /* Gevaar / Uit Voorraad (Rood) */
     div.stButton > button[key="header_del_btn"] {
         background-color: #dc3545; color: white;
     }
+    div.stButton > button[key="header_del_btn"]:hover {
+        background-color: #bb2d3b;
+    }
     
+    /* Bevestiging (Groen) */
     div.stButton > button[key="real_del_btn"] {
         background-color: #198754; color: white;
     }
@@ -64,11 +76,10 @@ st.markdown("""
         background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
     }
 
-    /* Checkbox vergroten */
+    /* Checkbox vergroten voor tablets */
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
-    /* VERBERG SIDEBAR OP TABLETS & MOBIEL (< 1024px) */
-    /* Hierdoor zijn Excel EN PDF upload alleen op desktop zichtbaar */
+    /* VERBERG SIDEBAR OP TABLETS (< 1024px) */
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
         [data-testid="collapsedControl"] { display: none !important; }
@@ -127,80 +138,6 @@ def bereken_unieke_orders(df):
     except:
         return 0
 
-# --- SLIMME PDF PARSER (MULTILINE & LOCATIE) ---
-def parse_racklisten_pdf(uploaded_file):
-    data = []
-    
-    with pdfplumber.open(uploaded_file) as pdf:
-        for page in pdf.pages:
-            # We halen alle tekst op. layout=True is niet nodig omdat we zelf slim zoeken
-            text = page.extract_text()
-            if not text: continue
-            
-            # 1. Locatie (Gestell) zoeken op de pagina
-            # We zoeken naar "Gestell: .... 1234" en pakken de laatste 4 cijfers
-            huidige_locatie = ""
-            gestell_match = re.search(r"(?i)Gestell\s*:\s*[\d-]*(\d{4})", text)
-            if gestell_match:
-                huidige_locatie = gestell_match.group(1)
-            
-            # 2. Glasregels zoeken (Order/Pos ... Aantal ... Breedte ... Hoogte)
-            # re.DOTALL zorgt dat '.' ook nieuwe regels matcht.
-            # \s+ matcht spaties EN enters. Dit is de sleutel tot succes.
-            
-            # Patroon:
-            # (\d{6,}\s*/\s*\d+)    -> Order/Pos (min 6 cijfers, slash, cijfer)
-            # \s+                   -> Witruimte/Enters
-            # (\d+)                 -> Aantal
-            # \s+                   -> Witruimte
-            # (\d{3,4})             -> Breedte
-            # \s*[\*x]?\s* -> Optioneel * of x tussen maten
-            # (\d{3,4})             -> Hoogte
-            
-            pattern = re.compile(r"(\d{6,}\s*/\s*\d+)\s+(\d+)\s+(\d{3,4})\s*[\*x]?\s*(\d{3,4})", re.DOTALL)
-            
-            for m in pattern.finditer(text):
-                order_pos = m.group(1).replace(" ", "") # Spaties uit order halen
-                aantal = m.group(2)
-                breedte = m.group(3)
-                hoogte = m.group(4)
-                
-                # 3. Omschrijving zoeken (tekst NA de hoogte)
-                omschrijving = ""
-                # We kijken naar de tekst die direct volgt op de match
-                # m.end() is het punt waar de hoogte stopt
-                rest_context = text[m.end():m.end()+150] # Pak ruim context
-                
-                # Split op regels en pak de eerste regel die tekst bevat
-                lines_after = rest_context.split('\n')
-                for line in lines_after:
-                    line = line.strip()
-                    if line: # Als de regel niet leeg is
-                        # Filter de '0' die vaak in de PDF staat weg
-                        if line == "0" or line == "0.0":
-                            continue # Dit is geen omschrijving, ga naar volgende regel
-                        
-                        clean_line = line
-                        if clean_line.startswith("0 "):
-                            clean_line = clean_line[2:].strip()
-                        
-                        # Als we nu iets zinnigs hebben, is dit de omschrijving
-                        if clean_line and not clean_line.replace('.','').isdigit():
-                             omschrijving = clean_line
-                             break # Gevonden! Stop met zoeken
-                
-                data.append({
-                    "Locatie": huidige_locatie,
-                    "Order": order_pos,
-                    "Aantal": aantal,
-                    "Breedte": breedte,
-                    "Hoogte": hoogte,
-                    "Omschrijving": omschrijving,
-                    "Spouw": "" 
-                })
-                    
-    return pd.DataFrame(data)
-
 # --- AUTH ---
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if not st.session_state.ingelogd:
@@ -223,15 +160,15 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (IMPORT) - ALLEEN DESKTOP ---
+# --- SIDEBAR (IMPORT) ---
 with st.sidebar:
-    # 1. EXCEL IMPORT
     st.subheader("📥 Excel Import")
-    uploaded_excel = st.file_uploader("Excel kiezen", type=["xlsx"], label_visibility="collapsed", key="u_excel")
-    if uploaded_excel:
-        if st.button("📤 Excel toevoegen", key="upload_excel_btn"):
+    uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
+    if uploaded_file:
+        st.info("Bestand herkend")
+        if st.button("📤 Toevoegen aan voorraad", key="upload_btn"):
             try:
-                nieuwe_data = pd.read_excel(uploaded_excel)
+                nieuwe_data = pd.read_excel(uploaded_file)
                 nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
                 mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
                 nieuwe_data = nieuwe_data.rename(columns=mapping)
@@ -254,41 +191,6 @@ with st.sidebar:
                 st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
-
-    st.markdown("---")
-
-    # 2. PDF IMPORT
-    st.subheader("📄 PDF Rackliste Import")
-    uploaded_pdf = st.file_uploader("PDF kiezen", type=["pdf"], label_visibility="collapsed", key="u_pdf")
-    if uploaded_pdf:
-        if st.button("📤 PDF verwerken & toevoegen", key="upload_pdf_btn"):
-            try:
-                pdf_data = parse_racklisten_pdf(uploaded_pdf)
-                if not pdf_data.empty:
-                    # Data gereedmaken
-                    pdf_data["ID"] = [str(uuid.uuid4()) for _ in range(len(pdf_data))]
-                    
-                    # Ontbrekende kolommen vullen
-                    for c in DATAKOLOMMEN:
-                        if c not in pdf_data.columns: pdf_data[c] = ""
-                    
-                    # Formatting
-                    for col in ["Aantal", "Breedte", "Hoogte"]:
-                        pdf_data[col] = pdf_data[col].apply(clean_int)
-                        
-                    final_pdf = pdf_data[["ID"] + DATAKOLOMMEN].astype(str)
-                    final_pdf.insert(0, "Selecteer", False)
-                    
-                    st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_pdf], ignore_index=True)
-                    sla_data_op(st.session_state.mijn_data)
-                    st.success(f"✅ {len(final_pdf)} ruiten uit PDF toegevoegd!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.warning("Geen geschikte data gevonden in PDF.")
-            except Exception as e:
-                st.error(f"Fout bij PDF verwerking: {e}")
-
     st.markdown("---")
     if st.button("🔄 Data Herladen"):
         del st.session_state.mijn_data
@@ -315,10 +217,11 @@ try:
 except:
     aantal_geselecteerd = 0
 
-# --- ACTIEBALK CONTAINER ---
+# --- ACTIEBALK CONTAINER (DE BLOK) ---
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
+    # FASE 3: BEVESTIGING
     st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels uit voorraad wilt melden?**")
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
@@ -335,14 +238,20 @@ if st.session_state.get('ask_del'):
             st.rerun()
 
 elif aantal_geselecteerd > 0:
+    # FASE 2: ACTIEMODUS (Vinkjes staan aan)
+    
+    # Gebruik kolommen om dingen netjes naast elkaar te zetten
+    # Layout: [Selectie Info]  [ --- Locatie Wijziging --- ]  [Uit Voorraad]
     col_sel, col_loc, col_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
 
+    # 1. Selectie Info & Reset
     with col_sel:
         st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
         if st.button("❌ Selectie wissen", key="deselect_btn", use_container_width=True):
             st.session_state.mijn_data["Selecteer"] = False
             st.rerun()
 
+    # 2. Locatie Wijzigen (Visueel gekoppeld)
     with col_loc:
         c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
         with c_inp:
@@ -360,13 +269,16 @@ elif aantal_geselecteerd > 0:
                 else:
                     st.toast("Vul eerst een locatie in", icon="⚠️")
 
+    # 3. Uit Voorraad Melden
     with col_out:
+        # Witruimte boven knop om hem op 1 lijn te krijgen met input veld
         st.write("") 
         if st.button("📦 Uit voorraad melden", key="header_del_btn", use_container_width=True):
             st.session_state.ask_del = True
             st.rerun()
 
 else:
+    # FASE 1: ZOEKMODUS (Standaard)
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     
     with c_in:
@@ -391,6 +303,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # --- TABEL ---
 view_df = df.copy()
 
+# Focus Mode: Als er selectie is, toon optie om alleen selectie te zien
 if aantal_geselecteerd > 0:
     st.caption("Weergave opties:")
     filter_mode = st.radio("Toon:", ["Alles", f"Alleen Selectie ({aantal_geselecteerd})"], 
@@ -398,10 +311,12 @@ if aantal_geselecteerd > 0:
     if "Alleen Selectie" in filter_mode:
         view_df = view_df[view_df["Selecteer"] == True]
     elif st.session_state.get("zoek_input"):
+         # Als we 'Alles' tonen maar er is nog een zoekterm
          zoekterm = st.session_state.get("zoek_input")
          mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
          view_df = view_df[mask]
 else:
+    # Standaard zoek filter
     if st.session_state.get("zoek_input"):
         zoekterm = st.session_state.get("zoek_input")
         mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
@@ -431,3 +346,4 @@ edited_df = st.data_editor(
 if not edited_df.equals(view_df):
     st.session_state.mijn_data.update(edited_df)
     st.rerun()
+
