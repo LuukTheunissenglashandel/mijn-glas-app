@@ -20,7 +20,7 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* 2. Actie Container (Witte balk met schaduw) */
+    /* 2. Actie Container */
     .actie-container {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -39,36 +39,22 @@ st.markdown("""
         transition: all 0.2s ease-in-out;
     }
     
-    /* Zoeken & Selecteren (Blauw) */
     div.stButton > button[key="search_btn"], 
-    div.stButton > button[key="select_all_btn"] { 
-        background-color: #0d6efd; color: white; 
-    }
-    
-    /* Locatie Wijzigen (Blauw) */
+    div.stButton > button[key="select_all_btn"],
     div.stButton > button[key="bulk_update_btn"] { 
         background-color: #0d6efd; color: white; 
     }
 
-    /* Secundair (Grijs/Wit) */
     div.stButton > button[key="clear_btn"],
     div.stButton > button[key="deselect_btn"], 
     div.stButton > button[key="cancel_del_btn"] { 
         background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; 
     }
-    div.stButton > button[key="deselect_btn"]:hover {
-        background-color: #e2e6ea;
-    }
     
-    /* Gevaar / Uit Voorraad (Rood) */
     div.stButton > button[key="header_del_btn"] {
         background-color: #dc3545; color: white;
     }
-    div.stButton > button[key="header_del_btn"]:hover {
-        background-color: #bb2d3b;
-    }
     
-    /* Bevestiging (Groen) */
     div.stButton > button[key="real_del_btn"] {
         background-color: #198754; color: white;
     }
@@ -78,11 +64,10 @@ st.markdown("""
         background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
     }
 
-    /* Checkbox vergroten voor tablets */
+    /* Checkbox vergroten */
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
     /* VERBERG SIDEBAR OP TABLETS (< 1024px) */
-    /* Hierdoor zijn Excel EN PDF upload alleen op desktop zichtbaar */
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
         [data-testid="collapsedControl"] { display: none !important; }
@@ -97,6 +82,7 @@ def get_connection():
 def clean_int(val):
     try:
         if val is None or str(val).strip() == "": return ""
+        # Vervang komma door punt en rond af
         s_val = str(val).replace(',', '.').strip()
         return str(int(float(s_val)))
     except:
@@ -141,45 +127,83 @@ def bereken_unieke_orders(df):
     except:
         return 0
 
-# --- NIEUWE FUNCTIE: PDF PARSER ---
+# --- SLIMME PDF PARSER (MET LOCATIE FIX) ---
 def parse_racklisten_pdf(uploaded_file):
     data = []
-    # pdfplumber opent het bestand direct uit het geheugen
+    
+    # pdfplumber openen
     with pdfplumber.open(uploaded_file) as pdf:
-        current_location = ""
+        
+        # Dit houdt de locatie bij terwijl we door het bestand "lezen"
+        # We beginnen leeg
+        huidige_locatie_nummer = ""
         
         for page in pdf.pages:
-            text = page.extract_text()
+            # layout=True zorgt dat we regel voor regel van boven naar beneden lezen
+            # Dit is cruciaal om eerst de header (Gestell) te zien en dan pas de regels
+            text = page.extract_text(layout=True, x_tolerance=2)
+            
             if not text: continue
             
-            # 1. Locatie zoeken (Gestell nummer, laatste 4 cijfers)
-            gestell_match = re.search(r"Gestell:\s*[\d-]*(\d{4})[-]*", text)
-            if gestell_match:
-                current_location = gestell_match.group(1)
-            
             lines = text.split('\n')
+            
             for line in lines:
-                # 2. Glasregels zoeken (Order/Pos, Aantal, Breedte, Hoogte)
-                # Regex zoekt naar: 1234/1  2  1000  2000 (met variaties in spaties/sterretjes)
+                line = line.strip()
+                
+                # STAP 1: Check of deze regel een Gestell nummer bevat
+                # We zoeken naar "Gestell" gevolgd door cijfers
+                if "Gestell" in line:
+                    # Regex om het nummer te vinden. Bijv: "Gestell: 0000203762-"
+                    gestell_match = re.search(r"Gestell.*(\d{4,})", line)
+                    if gestell_match:
+                        volledig_nummer = gestell_match.group(1)
+                        # We pakken de LAATSTE 4 cijfers
+                        huidige_locatie_nummer = volledig_nummer[-4:]
+                    continue # Ga naar de volgende regel, dit is geen glas-data
+
+                # STAP 2: Check of deze regel glas-data is
+                # We zoeken naar het patroon: Order/Pos Aantal Breedte Hoogte
+                # Bijv: "1398617/4 2 1382 1524" of "1398617/21 1 996 * 741"
+                
+                # Regex uitleg:
+                # (\d+/\d+)   -> Order/Pos (123/4)
+                # \s+(\d+)    -> Spatie + Aantal (2)
+                # \s+(\d{3,4}) -> Spatie + Breedte (3 of 4 cijfers)
+                # \s*[\*x]?\s* -> Spatie, optioneel * of x, spatie
+                # (\d{3,4})   -> Hoogte (3 of 4 cijfers)
                 match = re.search(r"(\d+/\d+)\s+(\d+)\s+(\d{3,4})\s*[\*x]?\s*(\d{3,4})", line)
+                
                 if match:
+                    # We hebben een match!
                     order_pos = match.group(1)
                     aantal = match.group(2)
                     breedte = match.group(3)
                     hoogte = match.group(4)
                     
-                    # Probeer info/ref te pakken (tekst achter de hoogte)
-                    rest_of_line = line.split(hoogte, 1)[1].strip() if len(line.split(hoogte, 1)) > 1 else ""
-                    
+                    # Probeer de omschrijving te pakken (alles achter de hoogte)
+                    omschrijving = ""
+                    try:
+                        # Split op de hoogte en pak wat er achter staat
+                        parts = line.split(str(hoogte))
+                        if len(parts) > 1:
+                            omschrijving = parts[-1].strip()
+                            # Veel regels beginnen met "0 " of "0.0" na de maten, die halen we weg
+                            if omschrijving.startswith("0 ") or omschrijving.startswith("0.0"):
+                                omschrijving = omschrijving.replace("0 ", "", 1).replace("0.0", "", 1).strip()
+                    except:
+                        pass
+
+                    # Voeg toe aan de lijst MET de huidige locatie
                     data.append({
-                        "Locatie": current_location,
+                        "Locatie": huidige_locatie_nummer, # Hier gebruiken we de gevonden Gestell code
                         "Order": order_pos,
                         "Aantal": aantal,
                         "Breedte": breedte,
                         "Hoogte": hoogte,
-                        "Omschrijving": rest_of_line,
-                        "Spouw": "" # Staat niet in deze PDF lijst
+                        "Omschrijving": omschrijving,
+                        "Spouw": "" 
                     })
+                    
     return pd.DataFrame(data)
 
 # --- AUTH ---
@@ -204,7 +228,7 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (IMPORT) - ALLEEN ZICHTBAAR OP DESKTOP ---
+# --- SIDEBAR (IMPORT) - ALLEEN DESKTOP ---
 with st.sidebar:
     # 1. EXCEL IMPORT
     st.subheader("📥 Excel Import")
@@ -238,7 +262,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # 2. PDF IMPORT (NIEUW - OOK ALLEEN DESKTOP)
+    # 2. PDF IMPORT
     st.subheader("📄 PDF Rackliste Import")
     uploaded_pdf = st.file_uploader("PDF kiezen", type=["pdf"], label_visibility="collapsed", key="u_pdf")
     if uploaded_pdf:
@@ -266,7 +290,7 @@ with st.sidebar:
                     time.sleep(1)
                     st.rerun()
                 else:
-                    st.warning("Geen bruikbare data gevonden in deze PDF.")
+                    st.warning("Geen bruikbare data gevonden. Controleer of de PDF leesbare tekst bevat.")
             except Exception as e:
                 st.error(f"Fout bij PDF verwerking: {e}")
 
@@ -296,11 +320,10 @@ try:
 except:
     aantal_geselecteerd = 0
 
-# --- ACTIEBALK CONTAINER (DE BLOK) ---
+# --- ACTIEBALK CONTAINER ---
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
-    # FASE 3: BEVESTIGING
     st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels uit voorraad wilt melden?**")
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
@@ -317,19 +340,14 @@ if st.session_state.get('ask_del'):
             st.rerun()
 
 elif aantal_geselecteerd > 0:
-    # FASE 2: ACTIEMODUS (Vinkjes staan aan)
-    
-    # Layout: [Selectie Info]  [ --- Locatie Wijziging --- ]  [Uit Voorraad]
     col_sel, col_loc, col_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
 
-    # 1. Selectie Info & Reset
     with col_sel:
         st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
         if st.button("❌ Selectie wissen", key="deselect_btn", use_container_width=True):
             st.session_state.mijn_data["Selecteer"] = False
             st.rerun()
 
-    # 2. Locatie Wijzigen
     with col_loc:
         c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
         with c_inp:
@@ -347,7 +365,6 @@ elif aantal_geselecteerd > 0:
                 else:
                     st.toast("Vul eerst een locatie in", icon="⚠️")
 
-    # 3. Uit Voorraad Melden
     with col_out:
         st.write("") 
         if st.button("📦 Uit voorraad melden", key="header_del_btn", use_container_width=True):
@@ -355,7 +372,6 @@ elif aantal_geselecteerd > 0:
             st.rerun()
 
 else:
-    # FASE 1: ZOEKMODUS (Standaard)
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     
     with c_in:
@@ -380,7 +396,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 # --- TABEL ---
 view_df = df.copy()
 
-# Focus Mode
 if aantal_geselecteerd > 0:
     st.caption("Weergave opties:")
     filter_mode = st.radio("Toon:", ["Alles", f"Alleen Selectie ({aantal_geselecteerd})"], 
