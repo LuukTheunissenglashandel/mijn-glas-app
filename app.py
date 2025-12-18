@@ -6,7 +6,6 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-# "Uit voorraad" toegevoegd aan de kolommen
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order", "Uit voorraad"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
@@ -44,10 +43,6 @@ st.markdown("""
     div.stButton > button[key="clear_btn"],
     div.stButton > button[key="deselect_btn"] { 
         background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; 
-    }
-    
-    div.stButton > button[key="header_del_btn"] {
-        background-color: #dc3545; color: white;
     }
 
     div[data-testid="stMetric"] {
@@ -89,7 +84,7 @@ def laad_data_van_cloud():
     
     for col in DATAKOLOMMEN:
         if col not in df.columns: 
-            df[col] = False if col == "Uit voorraad" else ""
+            df[col] = "False" if col == "Uit voorraad" else ""
 
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
         if col in df.columns: df[col] = df[col].apply(clean_int)
@@ -98,7 +93,6 @@ def laad_data_van_cloud():
 
 def sla_data_op(df):
     if df.empty:
-        st.warning("⚠️ Opslaan geannuleerd: De tabel is leeg!")
         return
 
     conn = get_connection()
@@ -182,14 +176,13 @@ with st.sidebar:
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
-    try: tot = df[df["Uit voorraad"] != "True"]["Aantal"].replace('', '0').astype(int).sum()
+    try: 
+        # Telt alleen ruiten die NIET uit voorraad zijn
+        mask_in = (df["Uit voorraad"] == "False") | (df["Uit voorraad"] == "")
+        tot = df[mask_in]["Aantal"].replace('', '0').astype(int).sum()
     except: tot = 0
     st.metric("In Voorraad (stuks)", tot)
 with c3: st.metric("Unieke Orders", bereken_unieke_orders(df))
-
-if 'success_msg' in st.session_state and st.session_state.success_msg:
-    st.success(st.session_state.success_msg)
-    st.session_state.success_msg = "" 
 
 # --- ACTIEBALK ---
 try:
@@ -201,7 +194,7 @@ except:
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if aantal_geselecteerd > 0:
-    col_sel, col_loc, col_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
+    col_sel, col_loc = st.columns([1.5, 4.5], gap="large", vertical_alignment="bottom")
     with col_sel:
         st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
         if st.button("❌ Wissen", key="deselect_btn", use_container_width=True):
@@ -220,15 +213,6 @@ if aantal_geselecteerd > 0:
                     st.session_state.mijn_data.loc[masker, "Selecteer"] = False
                     sla_data_op(st.session_state.mijn_data)
                     st.rerun()
-
-    with col_out:
-        if st.button("📦 Uit voorraad", key="header_del_btn", use_container_width=True):
-            masker = st.session_state.mijn_data["ID"].isin(geselecteerd_df["ID"])
-            st.session_state.mijn_data.loc[masker, "Uit voorraad"] = "True"
-            st.session_state.mijn_data.loc[masker, "Selecteer"] = False
-            sla_data_op(st.session_state.mijn_data)
-            st.session_state.success_msg = f"✅ {aantal_geselecteerd} regels gemarkeerd als 'Uit voorraad'"
-            st.rerun()
 else:
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     with c_in:
@@ -252,14 +236,14 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Zorg dat de checkbox-kolom de juiste types heeft voor de editor
+# Zet strings om naar booleans voor de checkbox weergave
 view_df["Uit voorraad"] = view_df["Uit voorraad"].map({'True': True, 'False': False, True: True, False: False})
 
 edited_df = st.data_editor(
     view_df,
     column_config={
         "Selecteer": st.column_config.CheckboxColumn("✅", default=False, width="small"),
-        "Uit voorraad": st.column_config.CheckboxColumn("Uit voorraad", default=False, width="small"),
+        "Uit voorraad": st.column_config.CheckboxColumn("Uit voorraad", default=False, width="medium"),
         "Locatie": st.column_config.TextColumn("Locatie", width="small"),
         "Aantal": st.column_config.TextColumn("Aant.", width="small"),
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
@@ -276,8 +260,8 @@ edited_df = st.data_editor(
     key="editor"
 )
 
+# Wijzigingen opslaan
 if not edited_df.equals(view_df):
-    # Converteer booleans terug naar strings voor consistentie in de opslag
     edited_df["Uit voorraad"] = edited_df["Uit voorraad"].astype(str)
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
