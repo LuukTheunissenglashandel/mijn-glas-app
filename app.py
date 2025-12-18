@@ -7,34 +7,29 @@ from streamlit_gsheets import GSheetsConnection
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
-# De door jou opgegeven lijst met locaties
+# De locatielijst voor de dropdown
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- 2. CSS: TABLET, TOUCH & KEYBOARD ONDERDRUKKING ---
+# --- 2. CSS: TABLET & KEYBOARD ONDERDRUKKING ---
 st.markdown("""
     <style>
-    /* Algemene layout */
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Knoppen groter voor duimen op tablet */
     div.stButton > button { 
         border-radius: 8px; height: 50px; font-weight: 600; border: none; 
     }
     
-    /* Hogere rijen voor makkelijk tikken */
     [data-testid="stDataEditor"] div {
         line-height: 1.8 !important;
     }
 
-    /* Grote checkbox voor 'Uit voorraad' */
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
 
-    /* --- KEYBOARD ONDERDRUKKING HACK --- */
-    /* Vertelt de browser: open geen virtueel toetsenbord voor invoervelden in de editor */
+    /* Voorkom toetsenbord pop-up op tablets bij selectie */
     [data-testid="stDataEditor"] input {
         inputmode: none !important;
     }
@@ -158,6 +153,53 @@ st.write("")
 # --- 9. TABEL & EDITOR ---
 view_df = df.copy()
 
-# Filteren op zoekterm
+# Filteren op zoekterm (GECORRIGEERDE REGEL)
 if st.session_state.get("zoek_input"):
-    mask = view_df.astype(str).apply(lambda x:
+    mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
+    view_df = view_df[mask]
+
+# Zet checkbox status klaar
+view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
+
+# Volgorde: Locatie -> Aantal -> Breedte -> Hoogte -> Order -> ✅ UIT VOORRAAD -> Omschrijving
+volgorde = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad_bool", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
+view_df = view_df[volgorde]
+
+def highlight_stock(s):
+    return ['background-color: #ff4b4b; color: white' if s["Uit voorraad_bool"] else '' for _ in s]
+
+styled_view = view_df.style.apply(highlight_stock, axis=1)
+
+edited_df = st.data_editor(
+    styled_view,
+    column_config={
+        "Locatie": st.column_config.SelectboxColumn(
+            "📍 Loc", 
+            width="small", 
+            options=LOCATIE_OPTIES,
+            required=True
+        ),
+        "Aantal": st.column_config.TextColumn("Aant.", width="small"),
+        "Breedte": st.column_config.TextColumn("Br.", width="small"),
+        "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
+        "Order": st.column_config.TextColumn("Order", width="medium"),
+        "Uit voorraad_bool": st.column_config.CheckboxColumn("✅ Uit voorraad", width="small"),
+        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
+        "Spouw": st.column_config.TextColumn("Sp.", width="small"),
+        "ID": None,            
+        "Uit voorraad": None   
+    },
+    disabled=["Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"],
+    hide_index=True,
+    use_container_width=True,
+    height=700,
+    key="editor"
+)
+
+# --- 10. OPSLAGLOGICA ---
+if not edited_df.equals(view_df):
+    edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
+    st.session_state.mijn_data.update(edited_df[["ID", "Locatie", "Uit voorraad"]])
+    sla_data_op(st.session_state.mijn_data)
+    st.success("Opgeslagen!")
+    st.rerun()
