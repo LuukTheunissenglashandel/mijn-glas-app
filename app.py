@@ -18,7 +18,7 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Alleen zichtbaar bij bulk acties */
+    /* Styling voor de actie-container (alleen zichtbaar bij selectie) */
     .actie-container {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -132,6 +132,7 @@ if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
     st.session_state.mijn_data.insert(0, "Selecteer", False)
 
+# Zorg voor de juiste types voor checkbox en berekeningen
 st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["Selecteer"].map({'True': True, 'False': False, True: True, False: False})
 df = st.session_state.mijn_data
 
@@ -162,7 +163,8 @@ with st.sidebar:
         del st.session_state.mijn_data
         st.rerun()
 
-# --- KPI BEREKENING (FIX) ---
+# --- KPI BEREKENING ---
+# We filteren op regels die NIET uit voorraad zijn
 active_mask = (df["Uit voorraad"].astype(str).str.lower() == "false") | (df["Uit voorraad"].astype(str) == "")
 active_df = df[active_mask]
 
@@ -170,11 +172,9 @@ active_df = df[active_mask]
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
-    # Robuuste som van Aantal
     aantal_numeric = pd.to_numeric(active_df["Aantal"], errors='coerce').fillna(0)
     st.metric("In Voorraad (stuks)", int(aantal_numeric.sum()))
 with c3: 
-    # Unieke orders van actieve voorraad
     unieke_orders = active_df[active_df["Order"] != ""]["Order"].apply(lambda x: str(x).split('-')[0].strip()).nunique()
     st.metric("Unieke Orders", unieke_orders)
 
@@ -182,7 +182,6 @@ with c3:
 geselecteerd_ids = df[df["Selecteer"] == True]["ID"].tolist()
 aantal_geselecteerd = len(geselecteerd_ids)
 
-# We tonen de witte balk ALLEEN als er iets geselecteerd is
 if aantal_geselecteerd > 0:
     st.markdown('<div class="actie-container">', unsafe_allow_html=True)
     col_sel, col_loc = st.columns([1.5, 4.5], gap="large", vertical_alignment="bottom")
@@ -203,7 +202,6 @@ if aantal_geselecteerd > 0:
                     st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 else:
-    # Gewone zoekbalk zonder de witte container eromheen
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, locatie...", label_visibility="collapsed", key="zoek_input")
     with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
@@ -223,6 +221,7 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
+# Zet strings om naar booleans voor de weergave
 view_df["Uit voorraad"] = view_df["Uit voorraad"].map({'True': True, 'False': False, True: True, False: False})
 
 def highlight_stock(s):
@@ -239,7 +238,8 @@ edited_df = st.data_editor(
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
-        "Uit voorraad": st.column_config.CheckboxColumn("Uit", default=False, width="small"),
+        # Aangepaste titel met newline en breedte
+        "Uit voorraad": st.column_config.CheckboxColumn("Uit voorraad\nmelden", default=False, width="small"),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
         "ID": None
