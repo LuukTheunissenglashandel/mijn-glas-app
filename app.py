@@ -10,8 +10,7 @@ DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- INITIALISATIE (CRUCIAAL TEGEN CRASHES) ---
-# We initialiseren de variabelen direct, zodat de app nooit vastloopt op een ontbrekende waarde
+# --- INITIALISATIE ---
 if "zoek_input" not in st.session_state:
     st.session_state.zoek_input = ""
 if "ingelogd" not in st.session_state:
@@ -76,12 +75,7 @@ def laad_data_van_cloud():
     return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
 
 def sla_data_op(df):
-    # --- BEVEILIGING: Nooit een lege tabel opslaan ---
-    # Dit voorkomt dat je per ongeluk je hele Google Sheet wist bij een foutje
-    if df.empty:
-        st.warning("⚠️ BEVEILIGING: Opslaan geannuleerd omdat de lijst leeg is. Je data is veilig.")
-        return
-    
+    # BEVEILIGING VERWIJDERD: Lege sheets worden nu gewoon opgeslagen.
     conn = get_connection()
     save_df = df.copy()
     if "Selecteer" in save_df.columns: save_df = save_df.drop(columns=["Selecteer"])
@@ -91,20 +85,26 @@ def sla_data_op(df):
     except Exception as e:
         st.error(f"Fout bij opslaan: {e}")
 
-def clear_search():
-    st.session_state.zoek_input = ""
-
 def bereken_unieke_orders(df):
     try:
         return df[df["Order"] != ""]["Order"].apply(lambda x: x.split('-')[0].strip()).nunique()
     except: return 0
+
+# --- KRITIEKE FUNCTIE: VOORKOMT VERBORGEN SELECTIES ---
+def reset_selectie():
+    # Zodra je zoekt, worden alle vinkjes uitgezet.
+    if 'mijn_data' in st.session_state:
+        st.session_state.mijn_data["Selecteer"] = False
+
+def clear_search():
+    st.session_state.zoek_input = ""
+    reset_selectie()
 
 # --- AUTH ---
 if not st.session_state.ingelogd:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.markdown("<h2 style='text-align: center;'>🔒 Glas Voorraad</h2>", unsafe_allow_html=True)
-        # Gebruik formulier zodat 'Enter' werkt bij wachtwoord
         with st.form("login"):
             ww = st.text_input("Wachtwoord", type="password", placeholder="Wachtwoord...")
             submit = st.form_submit_button("Inloggen", use_container_width=True)
@@ -183,24 +183,16 @@ if st.session_state.get('ask_del'):
     with col_ja:
         if st.button("✅ JA, Melden", key="real_del_btn", use_container_width=True):
             ids_weg = geselecteerd_df["ID"].tolist()
-            
-            # --- DELETION LOGICA ---
-            # 1. Verwijder alleen de ID's die in de lijst staan
+            # Verwijderen
             st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
-            
-            # 2. Opslaan (met lege-lijst beveiliging)
+            # Opslaan
             sla_data_op(st.session_state.mijn_data)
-            
-            # 3. Resetten van de staat
+            # Reset
             st.session_state.ask_del = False
             st.session_state.mijn_data["Selecteer"] = False
-            
-            # 4. CRUCIAAL: Maak de zoekbalk leeg zodat de tabel terugspringt naar "Alles"
             st.session_state.zoek_input = "" 
-            
             st.session_state.success_msg = f"✅ {len(ids_weg)} regels verwijderd!"
             st.rerun()
-
     with col_nee:
         if st.button("❌ ANNULEER", key="cancel_del_btn", use_container_width=True):
             st.session_state.ask_del = False
@@ -226,32 +218,30 @@ elif aantal_geselecteerd > 0:
                     st.session_state.mijn_data.loc[mask, "Selecteer"] = False
                     sla_data_op(st.session_state.mijn_data)
                     st.session_state.success_msg = f"📍 {len(ids)} verplaatst naar '{nieuwe_loc}'"
-                    st.session_state.zoek_input = "" # Ook hier resetten we de zoekbalk
+                    st.session_state.zoek_input = "" 
                     st.rerun()
     with col_out:
         st.write("") 
-        if st.button("📦 Uit voorraad", key="header_del_btn", use_container_width=True):
+        if st.button("📦 Uit voorraad melden", key="header_del_btn", use_container_width=True):
             st.session_state.ask_del = True
             st.rerun()
 
 else:
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     with c_in:
-        # Hier gebruiken we de veilige session_state key
-        st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input")
+        # on_change=reset_selectie zorgt dat verborgen vinkjes verdwijnen bij typen
+        st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input", on_change=reset_selectie)
     with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
     with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
     with c_all:
         if st.button("✅ Alles Selecteren", key="select_all_btn", use_container_width=True):
             view = df.copy()
-            # Gebruik de veilige zoekterm
             zoek = st.session_state.get("zoek_input", "")
             if zoek:
                 mask = view.astype(str).apply(lambda x: x.str.contains(zoek, case=False)).any(axis=1)
                 view = view[mask]
             
             ids = view["ID"].tolist()
-            # Update alleen de zichtbare regels naar True
             st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(ids), "Selecteer"] = True
             st.rerun()
 
@@ -259,8 +249,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # --- TABEL ---
 view_df = df.copy()
-
-# Veilige toegang tot zoekterm
 actieve_zoekterm = st.session_state.get("zoek_input", "")
 
 if aantal_geselecteerd > 0:
