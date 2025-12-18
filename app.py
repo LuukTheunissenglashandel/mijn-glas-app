@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import uuid
 import time
-import re
-import pdfplumber
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
@@ -12,7 +10,7 @@ DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: DESIGN & RESPONSIVENESS ---
+# --- CSS: PROFESSIONAL DESIGN ---
 st.markdown("""
     <style>
     /* 1. Algemene Layout */
@@ -67,7 +65,7 @@ st.markdown("""
     /* Checkbox vergroten */
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
-    /* VERBERG SIDEBAR OP TABLETS & MOBIEL (< 1024px) */
+    /* VERBERG SIDEBAR OP TABLETS (< 1024px) */
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
         [data-testid="collapsedControl"] { display: none !important; }
@@ -135,54 +133,6 @@ def bereken_unieke_orders(df):
     except:
         return 0
 
-# --- ROBUUSTE PDF PARSER ---
-def parse_racklisten_pdf(uploaded_file):
-    data = []
-    with pdfplumber.open(uploaded_file) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if not text: continue
-            
-            # 1. Locatie (Gestell) zoeken
-            huidige_locatie = ""
-            gestell_match = re.search(r"(?i)Gestell\s*:\s*[\d-]*(\d{4})", text)
-            if gestell_match:
-                huidige_locatie = gestell_match.group(1)
-            
-            # 2. Glasregels zoeken (over meerdere regels heen)
-            pattern = re.compile(r"(\d{6,}\s*/\s*\d+)\s+(\d+)\s+(\d{3,4})\s*[\*x]?\s*(\d{3,4})", re.DOTALL)
-            
-            for m in pattern.finditer(text):
-                order_pos = m.group(1).replace(" ", "")
-                aantal = m.group(2)
-                breedte = m.group(3)
-                hoogte = m.group(4)
-                
-                # 3. Omschrijving
-                omschrijving = ""
-                rest_context = text[m.end():m.end()+150]
-                lines_after = rest_context.split('\n')
-                for line in lines_after:
-                    line = line.strip()
-                    if line:
-                        if line == "0" or line == "0.0": continue
-                        clean_line = line
-                        if clean_line.startswith("0 "): clean_line = clean_line[2:].strip()
-                        if clean_line and not clean_line.replace('.','').isdigit():
-                             omschrijving = clean_line
-                             break
-                
-                data.append({
-                    "Locatie": huidige_locatie,
-                    "Order": order_pos,
-                    "Aantal": aantal,
-                    "Breedte": breedte,
-                    "Hoogte": hoogte,
-                    "Omschrijving": omschrijving,
-                    "Spouw": "" 
-                })
-    return pd.DataFrame(data)
-
 # --- AUTH ---
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if not st.session_state.ingelogd:
@@ -205,14 +155,15 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (IMPORT) ---
+# --- SIDEBAR (ALLEEN EXCEL IMPORT) ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
-    uploaded_excel = st.file_uploader("Excel kiezen", type=["xlsx"], label_visibility="collapsed", key="u_excel")
-    if uploaded_excel:
-        if st.button("📤 Excel toevoegen", key="upload_excel_btn"):
+    uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
+    if uploaded_file:
+        st.info("Bestand herkend")
+        if st.button("📤 Toevoegen aan voorraad", key="upload_btn"):
             try:
-                nieuwe_data = pd.read_excel(uploaded_excel)
+                nieuwe_data = pd.read_excel(uploaded_file)
                 nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
                 mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
                 nieuwe_data = nieuwe_data.rename(columns=mapping)
@@ -235,35 +186,7 @@ with st.sidebar:
                 st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
-
-    st.markdown("---")
-
-    st.subheader("📄 PDF Rackliste Import")
-    uploaded_pdf = st.file_uploader("PDF kiezen", type=["pdf"], label_visibility="collapsed", key="u_pdf")
-    if uploaded_pdf:
-        if st.button("📤 PDF verwerken & toevoegen", key="upload_pdf_btn"):
-            try:
-                pdf_data = parse_racklisten_pdf(uploaded_pdf)
-                if not pdf_data.empty:
-                    pdf_data["ID"] = [str(uuid.uuid4()) for _ in range(len(pdf_data))]
-                    for c in DATAKOLOMMEN:
-                        if c not in pdf_data.columns: pdf_data[c] = ""
-                    for col in ["Aantal", "Breedte", "Hoogte"]:
-                        pdf_data[col] = pdf_data[col].apply(clean_int)
-                        
-                    final_pdf = pdf_data[["ID"] + DATAKOLOMMEN].astype(str)
-                    final_pdf.insert(0, "Selecteer", False)
-                    
-                    st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_pdf], ignore_index=True)
-                    sla_data_op(st.session_state.mijn_data)
-                    st.success(f"✅ {len(final_pdf)} ruiten uit PDF toegevoegd!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.warning("Geen data gevonden in PDF.")
-            except Exception as e:
-                st.error(f"Fout bij PDF verwerking: {e}")
-
+    
     st.markdown("---")
     if st.button("🔄 Data Herladen"):
         del st.session_state.mijn_data
@@ -294,25 +217,23 @@ except:
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
-    # FASE 3: BEVESTIGING (MET RESET FIX)
+    # FASE 3: BEVESTIGING
     st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels uit voorraad wilt melden?**")
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
         if st.button("✅ JA, Melden", key="real_del_btn", use_container_width=True):
             ids_weg = geselecteerd_df["ID"].tolist()
             
-            # 1. Verwijder UIT DE DATASET (niet uit de gefilterde view)
+            # 1. Verwijder regels
             st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
             
-            # 2. Opslaan
+            # 2. Opslaan (met lege-lijst-beveiliging)
             sla_data_op(st.session_state.mijn_data)
             
-            # 3. Reset UI Statussen
+            # 3. Reset UI en zoekbalk!
             st.session_state.ask_del = False
             st.session_state.mijn_data["Selecteer"] = False
-            
-            # 4. CRUCIAAL: Wis de zoekterm zodat je weer alles ziet!
-            st.session_state.zoek_input = "" 
+            st.session_state.zoek_input = ""  # <--- DIT FIKST HET LEGE SCHERM
             
             st.session_state.success_msg = f"✅ {len(ids_weg)} regels uit voorraad gemeld!"
             st.rerun()
@@ -360,7 +281,6 @@ else:
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     
     with c_in:
-        # Let op: value=st.session_state.get('zoek_input', '') zorgt dat de input leeg wordt als wij dat willen
         zoekterm = st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", label_visibility="visible", key="zoek_input")
     with c_zo:
         st.button("🔍", key="search_btn", use_container_width=True)
@@ -393,7 +313,6 @@ if aantal_geselecteerd > 0:
          mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
          view_df = view_df[mask]
 else:
-    # Hier filteren we alleen voor de WEERGAVE. De echte data (df) blijft intact.
     if st.session_state.get("zoek_input"):
         zoekterm = st.session_state.get("zoek_input")
         mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
