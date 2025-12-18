@@ -4,22 +4,22 @@ import uuid
 import time
 from streamlit_gsheets import GSheetsConnection
 
-# ==========================================
-# 1. INSTELLINGEN & INITIALISATIE
-# ==========================================
+# ---------------------------------------------------------
+# 1. SETUP
+# ---------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Glas Voorraad")
-
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-# Initialiseer variabelen om crashes te voorkomen
+# Sessie status initialiseren (voorkomt crashes)
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
-if "mijn_data" not in st.session_state: st.session_state.mijn_data = pd.DataFrame(columns=["ID", "Selecteer"] + DATAKOLOMMEN)
-if "zoek_input" not in st.session_state: st.session_state.zoek_input = ""
+if "mijn_data" not in st.session_state: st.session_state.mijn_data = pd.DataFrame()
+if "bevestig_delete" not in st.session_state: st.session_state.bevestig_delete = False
+if "ids_om_te_wissen" not in st.session_state: st.session_state.ids_om_te_wissen = []
 
-# ==========================================
+# ---------------------------------------------------------
 # 2. FUNCTIES
-# ==========================================
+# ---------------------------------------------------------
 def get_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
@@ -35,174 +35,168 @@ def laad_data():
     conn = get_connection()
     try:
         df = conn.read(worksheet="Blad1", ttl=0)
-        if df is None or df.empty: 
-             return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
+        if df is None or df.empty: return pd.DataFrame(columns=["ID", "Selecteer"] + DATAKOLOMMEN)
     except:
-        return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
+        return pd.DataFrame(columns=["ID", "Selecteer"] + DATAKOLOMMEN)
 
+    # Data schoonmaken
     if "ID" not in df.columns: df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
-    
     for col in DATAKOLOMMEN:
         if col not in df.columns: df[col] = ""
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
         if col in df.columns: df[col] = df[col].apply(clean_int)
-        
-    result = df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
-    # CRUCIAAL: Voeg de vinkjes kolom toe
-    result["Selecteer"] = False
-    return result
+    
+    df = df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
+    
+    # CRUCIAAL: Zorg dat de Selecteer kolom altijd bestaat en False is bij laden
+    df["Selecteer"] = False
+    return df
 
 def sla_data_op(df):
     conn = get_connection()
-    save_df = df.copy()
-    if "Selecteer" in save_df.columns: 
-        save_df = save_df.drop(columns=["Selecteer"])
+    # Maak kopie om Selecteer kolom niet mee te sturen naar Google Sheets
+    export_df = df.copy()
+    if "Selecteer" in export_df.columns:
+        export_df = export_df.drop(columns=["Selecteer"])
     
+    # VEILIGHEID: Als export leeg is, checken of dat wel de bedoeling is
+    if export_df.empty:
+        st.warning("⚠️ De lijst is leeg. Opslaan overgeslagen uit veiligheid.")
+        return
+
     try:
-        conn.update(worksheet="Blad1", data=save_df)
+        conn.update(worksheet="Blad1", data=export_df)
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Fout bij opslaan: {e}")
 
-def reset_selecties():
-    """Zet alle vinkjes uit."""
-    if not st.session_state.mijn_data.empty and "Selecteer" in st.session_state.mijn_data.columns:
-        st.session_state.mijn_data["Selecteer"] = False
-
-# --- CALLBACK FUNCTIE (VOORKOMT API ERROR) ---
-def verwijder_actie():
-    # Zekerheidscheck: bestaat de kolom?
-    if "Selecteer" not in st.session_state.mijn_data.columns:
-        st.session_state.mijn_data["Selecteer"] = False
-        return # Niks te verwijderen
-
-    df = st.session_state.mijn_data
-    zoekterm = st.session_state.zoek_input
-    
-    # 1. Bepaal wat zichtbaar is
-    if zoekterm:
-        mask = df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
-        zichtbare_df = df[mask]
-    else:
-        zichtbare_df = df
-        
-    # 2. Bepaal wat weg moet (Zichtbaar EN Aangevinkt)
-    te_verwijderen_ids = zichtbare_df[zichtbare_df["Selecteer"] == True]["ID"].tolist()
-    
-    if te_verwijderen_ids:
-        # 3. Verwijder uit database
-        st.session_state.mijn_data = df[~df["ID"].isin(te_verwijderen_ids)]
-        
-        # 4. Opslaan
-        sla_data_op(st.session_state.mijn_data)
-        
-        # 5. Resetten
-        st.session_state.zoek_input = "" 
-        st.session_state.mijn_data["Selecteer"] = False
-        st.toast(f"✅ {len(te_verwijderen_ids)} regels verwijderd!")
-
-# ==========================================
-# 3. LOGIN
-# ==========================================
+# ---------------------------------------------------------
+# 3. LOGIN & DATA LADEN
+# ---------------------------------------------------------
 if not st.session_state.ingelogd:
-    c1, c2, c3 = st.columns([1,2,1])
-    with c2:
-        st.markdown("<h2 style='text-align: center;'>🔒 Glas Voorraad</h2>", unsafe_allow_html=True)
-        with st.form("login"):
-            ww = st.text_input("Wachtwoord", type="password")
-            if st.form_submit_button("Start", use_container_width=True):
-                if ww == WACHTWOORD:
-                    st.session_state.ingelogd = True
-                    with st.spinner("Laden..."):
-                        st.session_state.mijn_data = laad_data()
-                    st.rerun()
-                else:
-                    st.error("Fout wachtwoord")
+    ww = st.text_input("Wachtwoord", type="password")
+    if st.button("Login"):
+        if ww == WACHTWOORD:
+            st.session_state.ingelogd = True
+            st.session_state.mijn_data = laad_data()
+            st.rerun()
+        else:
+            st.error("Fout wachtwoord")
     st.stop()
 
-# ==========================================
-# 4. HOOFDSCHERM
-# ==========================================
-
-# --- FIX VOOR KEYERROR ---
-# Check of data geladen is EN of de kolom Selecteer bestaat.
-# Zo niet: Repareer het direct.
-if "ID" not in st.session_state.mijn_data.columns:
+# Als data leeg is (door refresh), opnieuw laden
+if st.session_state.mijn_data.empty:
     st.session_state.mijn_data = laad_data()
-elif "Selecteer" not in st.session_state.mijn_data.columns:
-    st.session_state.mijn_data["Selecteer"] = False
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR ---
+# ---------------------------------------------------------
+# 4. DE APP
+# ---------------------------------------------------------
+st.title("Glas Voorraad Beheer")
+
+# A. SIDEBAR IMPORT
 with st.sidebar:
-    st.header("Excel Import")
-    uploaded = st.file_uploader("Kies Excel", type=["xlsx"])
-    if uploaded and st.button("Toevoegen"):
+    st.header("Import")
+    up = st.file_uploader("Excel", type=["xlsx"])
+    if up and st.button("Importeer"):
         try:
-            nieuwe = pd.read_excel(uploaded)
+            nieuwe = pd.read_excel(up)
             nieuwe.columns = [c.strip().capitalize() for c in nieuwe.columns]
             mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
             nieuwe = nieuwe.rename(columns=mapping)
             nieuwe["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe))]
-            if "Locatie" not in nieuwe.columns: nieuwe["Locatie"] = ""
-            for c in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
-                if c in nieuwe.columns: nieuwe[c] = nieuwe[c].apply(clean_int)
+            
+            # Kolommen matchen
             for c in DATAKOLOMMEN:
                 if c not in nieuwe.columns: nieuwe[c] = ""
+            for c in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
+                if c in nieuwe.columns: nieuwe[c] = nieuwe[c].apply(clean_int)
+            
             final = nieuwe[["ID"] + DATAKOLOMMEN].astype(str)
             final["Selecteer"] = False
+            
             st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final], ignore_index=True)
             sla_data_op(st.session_state.mijn_data)
-            st.success("Toegevoegd!")
+            st.success("Geïmporteerd!")
             time.sleep(1)
             st.rerun()
-        except Exception as e: st.error(f"Fout: {e}")
+        except Exception as e:
+            st.error(f"Fout: {e}")
     
-    st.markdown("---")
-    if st.button("Reset & Reload"):
+    if st.button("Geforceerd Herladen"):
         st.session_state.mijn_data = laad_data()
         st.rerun()
 
-# --- ZOEKEN & HEADER ---
-st.title("🏭 Glas Voorraad")
+# B. ZOEKEN
+zoekterm = st.text_input("Zoeken (Order, maat, locatie)", "")
 
-zoekterm = st.text_input("Zoeken", placeholder="Typ order, maat...", key="zoek_input", on_change=reset_selecties)
-
-# --- FILTER LOGICA ---
+# C. FILTEREN (Alleen voor weergave!)
 view_df = df.copy()
 if zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Tel selecties (Veilig)
-if "Selecteer" in view_df.columns:
-    zichtbare_selectie = view_df[view_df["Selecteer"] == True]
-    aantal_geselecteerd = len(zichtbare_selectie)
-else:
-    aantal_geselecteerd = 0
+# D. VERWIJDER PROCES (Stap voor Stap)
+aantal_geselecteerd = len(df[df["Selecteer"] == True])
 
-# --- KNOPPEN ---
 if aantal_geselecteerd > 0:
-    st.info(f"**{aantal_geselecteerd}** regels geselecteerd om te verwijderen.")
-    st.button(f"🗑️ Verwijder {aantal_geselecteerd} regels", type="primary", on_click=verwijder_actie)
+    st.info(f"Je hebt {aantal_geselecteerd} regels aangevinkt.")
+    
+    if st.button("🗑️ Verwijderen Controleren"):
+        # We slaan de IDs op in session state zodat we ze niet kwijtraken bij een rerun
+        st.session_state.ids_om_te_wissen = df[df["Selecteer"] == True]["ID"].tolist()
+        st.session_state.bevestig_delete = True
 
-# --- EDITOR ---
+if st.session_state.bevestig_delete:
+    st.warning("⚠️ **Weet je het zeker?**")
+    st.write("De volgende IDs worden definitief verwijderd:")
+    # Laat even zien wat er weg gaat (check voor gebruiker)
+    preview_weg = df[df["ID"].isin(st.session_state.ids_om_te_wissen)]
+    st.dataframe(preview_weg[["Order", "Breedte", "Hoogte", "Locatie"]])
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ JA, DEFINITIEF VERWIJDEREN"):
+            # 1. Filteren
+            oude_lengte = len(st.session_state.mijn_data)
+            st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(st.session_state.ids_om_te_wissen)]
+            nieuwe_lengte = len(st.session_state.mijn_data)
+            
+            # 2. Opslaan
+            sla_data_op(st.session_state.mijn_data)
+            
+            # 3. Resetten
+            st.session_state.bevestig_delete = False
+            st.session_state.ids_om_te_wissen = []
+            st.success(f"{oude_lengte - nieuwe_lengte} regels verwijderd!")
+            time.sleep(1)
+            st.rerun()
+            
+    with col2:
+        if st.button("❌ Annuleren"):
+            st.session_state.bevestig_delete = False
+            st.session_state.ids_om_te_wissen = []
+            st.rerun()
+
+# E. DE TABEL
+# Cruciaal: We gebruiken session_state.mijn_data direct voor sync
+# Als je filtert, tonen we de gefilterde set, maar edits gaan naar de master data
 edited_df = st.data_editor(
     view_df,
+    key="data_editor",
     column_config={
         "Selecteer": st.column_config.CheckboxColumn("✅", default=False, width="small"),
         "ID": None
     },
     disabled=["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"],
     hide_index=True,
-    use_container_width=True,
-    height=600,
-    key="editor"
+    height=600
 )
 
-# --- SYNC ---
+# SYNC LOGICA: Vinkjes overnemen in de hoofdlijst
 if not edited_df.equals(view_df):
+    # Update de vinkjes in de hoofddatabase op basis van ID
     wijzigingen = dict(zip(edited_df["ID"], edited_df["Selecteer"]))
     st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["ID"].map(wijzigingen).fillna(st.session_state.mijn_data["Selecteer"]).astype(bool)
     st.rerun()
