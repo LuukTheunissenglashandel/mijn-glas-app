@@ -6,7 +6,7 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-# Volgorde: Locatie, Aantal, Breedte, Hoogte, Order, Uit voorraad, Omschrijving, Spouw
+# Volgorde van opslag/data
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
@@ -18,18 +18,28 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
+    .actie-container {
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
+    }
+
     div.stButton > button { 
         border-radius: 8px; height: 45px; font-weight: 600; border: none; 
     }
     
-    div.stButton > button[key="search_btn"] { background-color: #0d6efd; color: white; }
-    div.stButton > button[key="clear_btn"] { background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; }
+    div.stButton > button[key="search_btn"], 
+    div.stButton > button[key="bulk_update_btn"] { background-color: #0d6efd; color: white; }
+    div.stButton > button[key="clear_btn"], 
+    div.stButton > button[key="deselect_btn"] { background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; }
 
     div[data-testid="stMetric"] {
         background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px;
     }
 
-    /* Checkbox groter voor makkelijker klikken */
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
     @media only screen and (max-width: 1024px) {
@@ -47,8 +57,7 @@ def clean_int(val):
     try:
         if val is None or str(val).strip() == "": return ""
         return str(int(float(str(val).replace(',', '.'))))
-    except:
-        return str(val)
+    except: return str(val)
 
 def laad_data_van_cloud():
     conn = get_connection()
@@ -66,7 +75,6 @@ def laad_data_van_cloud():
         if col not in df.columns: 
             df[col] = "Nee" if col == "Uit voorraad" else ""
 
-    # Forceer "Uit voorraad" naar Ja/Nee tekst voor stabiliteit
     if "Uit voorraad" in df.columns:
         df["Uit voorraad"] = df["Uit voorraad"].astype(str).apply(
             lambda x: "Ja" if x.lower() in ["true", "ja", "1", "yes"] else "Nee"
@@ -80,8 +88,11 @@ def laad_data_van_cloud():
 def sla_data_op(df):
     if df.empty: return
     conn = get_connection()
-    # Maak een kopie en zorg dat alles platte tekst is voor de cloud
-    save_df = df.copy().astype(str)
+    save_df = df.copy()
+    if "Selecteer_bool" in save_df.columns:
+        save_df = save_df.drop(columns=["Selecteer_bool"])
+    
+    save_df = save_df.astype(str)
     try:
         conn.update(worksheet="Blad1", data=save_df)
         st.cache_data.clear()
@@ -111,7 +122,7 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR ---
+# --- SIDEBAR (IMPORT) ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
@@ -142,11 +153,36 @@ with c3:
     orders = active_df[active_df["Order"] != ""]["Order"].apply(lambda x: str(x).split('-')[0].strip())
     st.metric("Unieke Orders", orders.nunique())
 
-# --- ZOEKBALK ---
-c_in, c_zo, c_wi = st.columns([7, 1, 1], gap="small", vertical_alignment="bottom")
-with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek...", label_visibility="collapsed", key="zoek_input")
-with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
-with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
+# --- SELECTIE LOGICA ---
+if "geselecteerd_ids" not in st.session_state:
+    st.session_state.geselecteerd_ids = []
+
+aantal_geselecteerd = len(st.session_state.geselecteerd_ids)
+
+# --- ACTIE/ZOEK BALK ---
+if aantal_geselecteerd > 0:
+    st.markdown('<div class="actie-container">', unsafe_allow_html=True)
+    col_sel, col_loc = st.columns([1.5, 4.5], gap="large", vertical_alignment="bottom")
+    with col_sel:
+        st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
+        if st.button("❌ Wissen", key="deselect_btn", use_container_width=True):
+            st.session_state.geselecteerd_ids = []
+            st.rerun()
+    with col_loc:
+        c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
+        with c_inp: nieuwe_loc = st.text_input("Locatie", placeholder="Nieuwe locatie...", label_visibility="collapsed")
+        with c_btn:
+            if st.button("📍 Verplaats", key="bulk_update_btn", use_container_width=True) and nieuwe_loc:
+                st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(st.session_state.geselecteerd_ids), "Locatie"] = nieuwe_loc
+                st.session_state.geselecteerd_ids = []
+                sla_data_op(st.session_state.mijn_data)
+                st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+else:
+    c_in, c_zo, c_wi = st.columns([7, 1, 1], gap="small", vertical_alignment="bottom")
+    with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, afmeting of locatie...", label_visibility="collapsed", key="zoek_input")
+    with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
+    with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
 st.write("") 
 
@@ -156,7 +192,8 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# BELANGRIJK: Omzetten naar echte booleans ALLEEN voor het tonen van de checkbox
+# UI Booleans voorbereiden
+view_df["Selecteren"] = view_df["ID"].isin(st.session_state.geselecteerd_ids)
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
 def highlight_stock(s):
@@ -167,33 +204,35 @@ styled_view = view_df.style.apply(highlight_stock, axis=1)
 edited_df = st.data_editor(
     styled_view,
     column_config={
+        "Selecteren": st.column_config.CheckboxColumn("Selecteren", width="small", default=False),
         "Locatie": st.column_config.TextColumn("Locatie", width="small"),
         "Aantal": st.column_config.TextColumn("Aant.", width="small"),
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
-        # Hier is het vinkje terug voor 1-klik actie
         "Uit voorraad_bool": st.column_config.CheckboxColumn("Uit voorraad\nmelden", width="small", default=False),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
-        "ID": None,
-        "Uit voorraad": None # Verberg de tekst kolom
+        "ID": None, "Uit voorraad": None
     },
-    disabled=["ID", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"], # Alleen checkbox klikbaar maken voor snelheid
+    disabled=["ID"],
     hide_index=True,
     use_container_width=True,
     height=700,
     key="editor"
 )
 
-# VERWERKING VAN DE KLIK
+# VERWERKING WIJZIGINGEN
 if not edited_df.equals(view_df):
-    # Vertaal de checkbox-klik direct terug naar Ja/Nee tekst
+    # 1. Update Selectie (gebeurt lokaal in sessie)
+    st.session_state.geselecteerd_ids = edited_df[edited_df["Selecteren"] == True]["ID"].tolist()
+    
+    # 2. Update Uit voorraad tekst
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
     
-    # Update de hoofd-dataset
-    st.session_state.mijn_data.update(edited_df[["ID", "Uit voorraad"]])
+    # 3. Update hoofd-dataset
+    st.session_state.mijn_data.update(edited_df[["ID", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]])
     
-    # Sla op naar Google Sheets
+    # 4. Opslaan & Refresh
     sla_data_op(st.session_state.mijn_data)
     st.rerun()
