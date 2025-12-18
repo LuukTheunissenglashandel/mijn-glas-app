@@ -47,18 +47,13 @@ def laad_data():
 
 def sla_data_op(df):
     conn = get_connection()
-    # Opslaan zonder Selecteer kolom (die is alleen voor de app)
-    save_df = df.copy()
-    if "Selecteer" in save_df.columns: 
-        save_df = save_df.drop(columns=["Selecteer"])
-    
-    # Veiligheidscheck: Nooit een lege lijst opslaan als er daarvoor nog data was
-    if save_df.empty and len(st.session_state.mijn_data) > 5:
+    # Veiligheidscheck: blokkeer als lijst plots leeg is terwijl hij vol was
+    if df.empty and len(st.session_state.mijn_data) > 5:
         st.error("⚠️ FOUT: De app probeerde alles te wissen. Opslaan geblokkeerd.")
         return
 
     try:
-        conn.update(worksheet="Blad1", data=save_df)
+        conn.update(worksheet="Blad1", data=df)
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Fout bij opslaan: {e}")
@@ -83,14 +78,14 @@ if not st.session_state.ingelogd:
 if "ID" not in st.session_state.mijn_data.columns:
     st.session_state.mijn_data = laad_data()
 
-# We werken met een lokale kopie voor weergave
+# Werk met een kopie voor weergave
 df = st.session_state.mijn_data.copy()
 
 # ==========================================
-# 5. SIDEBAR (IMPORT)
+# 5. IMPORT (SIDEBAR)
 # ==========================================
 with st.sidebar:
-    st.header("Import")
+    st.header("Excel Import")
     up = st.file_uploader("Excel", type=["xlsx"])
     if up and st.button("Toevoegen"):
         try:
@@ -113,6 +108,7 @@ with st.sidebar:
             st.rerun()
         except Exception as e: st.error(f"Fout: {e}")
     
+    st.markdown("---")
     if st.button("Herlaad Data"):
         st.session_state.mijn_data = laad_data()
         st.rerun()
@@ -120,59 +116,60 @@ with st.sidebar:
 # ==========================================
 # 6. HOOFDSCHERM
 # ==========================================
-st.title("Glas Voorraad")
+st.title("🏭 Glas Voorraad")
 
-# A. Zoekbalk
-zoekterm = st.text_input("Zoeken", placeholder="Typ hier...")
+# A. ZOEKEN
+zoekterm = st.text_input("Zoeken", placeholder="Typ order, maat, locatie...")
 
-# B. Filteren (We maken een NIEUWE weergave, los van de hoofddata)
+# B. FILTEREN
 view_df = df.copy()
 if zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# C. Voeg de checkbox kolom toe aan de WEERGAVE (standaard False)
-# We dwingen hier af dat vinkjes ALTIJD uit staan als je zoekt/laadt.
-view_df.insert(0, "Selecteer", False)
-
-# D. De Tabel Editor
-# We gebruiken een unieke key gebaseerd op de zoekterm. 
-# Dit zorgt ervoor dat als je zoekt, de tabel volledig wordt ververst (vinkjes weg).
-edited_df = st.data_editor(
-    view_df,
-    key=f"editor_{len(view_df)}_{zoekterm}", 
-    column_config={
-        "Selecteer": st.column_config.CheckboxColumn("✅", default=False, width="small"),
-        "ID": None
-    },
-    disabled=["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"],
-    hide_index=True,
-    height=600,
-    use_container_width=True
+# C. TABEL TONEN (ZONDER VINKJES - PUUR KIJKEN)
+st.dataframe(
+    view_df.drop(columns=["ID"]), 
+    hide_index=True, 
+    use_container_width=True,
+    height=400
 )
 
-# ==========================================
-# 7. VERWIJDER LOGICA (ALLEEN WAT JE ZIET)
-# ==========================================
+# D. VERWIJDER MODULE (FOUTLOOS)
+st.markdown("---")
+st.subheader("🗑️ Verwijderen")
 
-# We kijken nu ALLEEN naar 'edited_df'. Dat is de tabel die jij op je scherm hebt.
-# Wat daar niet in staat (omdat het verborgen is), bestaat voor deze logica niet.
-geselecteerde_regels = edited_df[edited_df["Selecteer"] == True]
+# Maak een leesbare lijst van de gevonden regels
+# We maken een dictionary: "Order A - 100x100 (Locatie B)" -> ID
+keuze_lijst = {}
+for index, row in view_df.iterrows():
+    # Dit is de tekst die je in de dropdown ziet
+    label = f"Order: {row['Order']} | Maat: {row['Breedte']}x{row['Hoogte']} | Loc: {row['Locatie']} | ({row['Omschrijving']})"
+    keuze_lijst[label] = row["ID"]
 
-if not geselecteerde_regels.empty:
-    aantal = len(geselecteerde_regels)
-    st.warning(f"Je hebt **{aantal}** regels geselecteerd.")
-    
-    if st.button(f"🗑️ Verwijder {aantal} regels definitief"):
-        # 1. Haal de IDs op van de regels die JIJ hebt aangevinkt
-        ids_weg = geselecteerde_regels["ID"].tolist()
+# De Dropdown / Multiselect
+if not view_df.empty:
+    geselecteerde_labels = st.multiselect(
+        "Selecteer hieronder de regels die je wilt verwijderen:",
+        options=list(keuze_lijst.keys())
+    )
+
+    if geselecteerde_labels:
+        aantal = len(geselecteerde_labels)
+        st.warning(f"Je staat op het punt **{aantal}** regel(s) definitief te verwijderen.")
         
-        # 2. Verwijder deze IDs uit de hoofddatabase
-        st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_weg)]
-        
-        # 3. Opslaan
-        sla_data_op(st.session_state.mijn_data)
-        
-        st.success("Regels verwijderd!")
-        time.sleep(1)
-        st.rerun()
+        if st.button(f"JA, Verwijder {aantal} regels", type="primary"):
+            # 1. Zoek de IDs bij de labels
+            ids_om_te_wissen = [keuze_lijst[label] for label in geselecteerde_labels]
+            
+            # 2. Verwijder uit hoofddatabase
+            st.session_state.mijn_data = st.session_state.mijn_data[~st.session_state.mijn_data["ID"].isin(ids_om_te_wissen)]
+            
+            # 3. Opslaan
+            sla_data_op(st.session_state.mijn_data)
+            
+            st.success("Verwijderd!")
+            time.sleep(1)
+            st.rerun()
+else:
+    st.info("Geen ruiten gevonden met deze zoekterm.")
