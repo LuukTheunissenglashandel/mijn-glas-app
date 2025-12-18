@@ -6,7 +6,6 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-# De exacte volgorde van de kolommen in de tabel
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
@@ -18,7 +17,6 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Knoppen styling */
     div.stButton > button { 
         border-radius: 8px; 
         height: 45px; 
@@ -35,12 +33,10 @@ st.markdown("""
         background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; 
     }
 
-    /* KPI Cards */
     div[data-testid="stMetric"] {
         background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px;
     }
 
-    /* Checkbox vergroten */
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
     @media only screen and (max-width: 1024px) {
@@ -65,6 +61,7 @@ def clean_int(val):
 def laad_data_van_cloud():
     conn = get_connection()
     try:
+        # Forceer TTL op 0 om altijd de nieuwste data te hebben
         df = conn.read(worksheet="Blad1", ttl=0)
         if df is None or df.empty:
             return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
@@ -78,6 +75,12 @@ def laad_data_van_cloud():
         if col not in df.columns: 
             df[col] = "False" if col == "Uit voorraad" else ""
 
+    # Normaliseer "Uit voorraad" kolom naar string "True" / "False"
+    if "Uit voorraad" in df.columns:
+        df["Uit voorraad"] = df["Uit voorraad"].astype(str).str.strip().str.capitalize()
+        # Zorg dat vreemde waarden altijd "False" worden tenzij het echt "True" is
+        df["Uit voorraad"] = df["Uit voorraad"].apply(lambda x: "True" if x == "True" else "False")
+
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
         if col in df.columns: df[col] = df[col].apply(clean_int)
             
@@ -88,15 +91,15 @@ def sla_data_op(df):
     conn = get_connection()
     save_df = df.copy()
     
-    # Zorg dat booleans als tekst worden opgeslagen voor GSheets
-    if "Uit voorraad" in save_df.columns:
-        save_df["Uit voorraad"] = save_df["Uit voorraad"].astype(str)
+    # Alles naar string converteren voor Google Sheets om type-fouten te voorkomen
+    for col in save_df.columns:
+        save_df[col] = save_df[col].astype(str)
 
     try:
         conn.update(worksheet="Blad1", data=save_df)
         st.cache_data.clear()
     except Exception as e:
-        st.error(f"Fout bij opslaan: {e}")
+        st.error(f"Fout bij opslaan naar cloud: {e}")
 
 def clear_search():
     st.session_state.zoek_input = ""
@@ -122,7 +125,7 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (ALLEEN IMPORT) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
@@ -133,13 +136,10 @@ with st.sidebar:
                 nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
                 mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
                 nieuwe_data = nieuwe_data.rename(columns=mapping)
-                
                 nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
                 nieuwe_data["Uit voorraad"] = "False"
-                
                 for col in DATAKOLOMMEN:
                     if col not in nieuwe_data.columns: nieuwe_data[col] = ""
-                
                 final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
                 st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
                 sla_data_op(st.session_state.mijn_data)
@@ -147,11 +147,10 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Fout: {e}")
 
-# --- KPI BEREKENING ---
+# --- KPI's ---
 active_mask = df["Uit voorraad"].astype(str).str.upper() != "TRUE"
 active_df = df[active_mask]
 
-# --- HEADER & KPI's ---
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
@@ -165,27 +164,25 @@ with c3:
 c_in, c_zo, c_wi = st.columns([7, 1, 1], gap="small", vertical_alignment="bottom")
 with c_in: 
     zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, afmeting of locatie...", label_visibility="collapsed", key="zoek_input")
-with c_zo: 
-    st.button("🔍", key="search_btn", use_container_width=True)
-with c_wi: 
-    st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
+with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
+with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
-st.write("") # Spacer
+st.write("") 
 
-# --- TABEL VOORBEREIDING ---
+# --- TABEL ---
 view_df = df.copy()
 if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-view_df["Uit voorraad"] = view_df["Uit voorraad"].astype(str).str.upper() == "TRUE"
+# Zet om naar boolean voor de UI
+view_df["Uit voorraad"] = view_df["Uit voorraad"].apply(lambda x: True if str(x).capitalize() == "True" else False)
 
 def highlight_stock(s):
     return ['background-color: #ff4b4b; color: white' if s["Uit voorraad"] else '' for _ in s]
 
 styled_view = view_df.style.apply(highlight_stock, axis=1)
 
-# --- DE DATA EDITOR ---
 edited_df = st.data_editor(
     styled_view,
     column_config={
@@ -206,9 +203,18 @@ edited_df = st.data_editor(
     key="editor"
 )
 
+# SYNC LOGICA: Alleen opslaan als er echt iets veranderd is
 if not edited_df.equals(view_df):
-    update_df = edited_df.copy()
-    update_df["Uit voorraad"] = update_df["Uit voorraad"].astype(str)
-    st.session_state.mijn_data.update(update_df)
+    # Converteer de booleans in de bewerkte data terug naar strings ("True"/"False")
+    # zodat ze overeenkomen met de structuur in st.session_state.mijn_data
+    update_data = edited_df.copy()
+    update_data["Uit voorraad"] = update_data["Uit voorraad"].apply(lambda x: "True" if x else "False")
+    
+    # Update de hoofd-dataset in het geheugen
+    st.session_state.mijn_data.update(update_data)
+    
+    # Sla direct op naar Google Sheets
     sla_data_op(st.session_state.mijn_data)
+    
+    # Herlaad de pagina om de wijziging (en kleur) te bevestigen
     st.rerun()
