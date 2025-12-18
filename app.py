@@ -12,7 +12,7 @@ st.set_page_config(layout="wide", page_title="Glas Voorraad")
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-# Initieer session state variabelen om crashes te voorkomen
+# Initialiseer variabelen om crashes te voorkomen
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if "mijn_data" not in st.session_state: st.session_state.mijn_data = pd.DataFrame(columns=["ID", "Selecteer"] + DATAKOLOMMEN)
 if "zoek_input" not in st.session_state: st.session_state.zoek_input = ""
@@ -48,6 +48,7 @@ def laad_data():
         if col in df.columns: df[col] = df[col].apply(clean_int)
         
     result = df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
+    # CRUCIAAL: Voeg de vinkjes kolom toe
     result["Selecteer"] = False
     return result
 
@@ -65,35 +66,37 @@ def sla_data_op(df):
 
 def reset_selecties():
     """Zet alle vinkjes uit."""
-    if not st.session_state.mijn_data.empty:
+    if not st.session_state.mijn_data.empty and "Selecteer" in st.session_state.mijn_data.columns:
         st.session_state.mijn_data["Selecteer"] = False
 
-# --- CRUCIALE CALLBACK FUNCTIE ---
-# Dit wordt uitgevoerd ZODRA je op de verwijder knop drukt, maar VOORDAT het scherm herlaadt.
-# Hierdoor crasht de app niet bij het leegmaken van de zoekbalk.
+# --- CALLBACK FUNCTIE (VOORKOMT API ERROR) ---
 def verwijder_actie():
+    # Zekerheidscheck: bestaat de kolom?
+    if "Selecteer" not in st.session_state.mijn_data.columns:
+        st.session_state.mijn_data["Selecteer"] = False
+        return # Niks te verwijderen
+
     df = st.session_state.mijn_data
     zoekterm = st.session_state.zoek_input
     
-    # 1. Bepaal wat er ZICHTBAAR is (het filter nabootsen)
+    # 1. Bepaal wat zichtbaar is
     if zoekterm:
         mask = df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
         zichtbare_df = df[mask]
     else:
         zichtbare_df = df
         
-    # 2. Bepaal wat er GESELECTEERD is binnen de zichtbare data
-    # Dit is de beveiliging: we kijken alleen naar IDs die zichtbaar EN aangevinkt zijn.
+    # 2. Bepaal wat weg moet (Zichtbaar EN Aangevinkt)
     te_verwijderen_ids = zichtbare_df[zichtbare_df["Selecteer"] == True]["ID"].tolist()
     
     if te_verwijderen_ids:
-        # 3. Verwijder uit de hoofddataset
+        # 3. Verwijder uit database
         st.session_state.mijn_data = df[~df["ID"].isin(te_verwijderen_ids)]
         
         # 4. Opslaan
         sla_data_op(st.session_state.mijn_data)
         
-        # 5. Resetten (Dit mag hier wel!)
+        # 5. Resetten
         st.session_state.zoek_input = "" 
         st.session_state.mijn_data["Selecteer"] = False
         st.toast(f"✅ {len(te_verwijderen_ids)} regels verwijderd!")
@@ -121,9 +124,13 @@ if not st.session_state.ingelogd:
 # 4. HOOFDSCHERM
 # ==========================================
 
-# Veiligheidscheck data
+# --- FIX VOOR KEYERROR ---
+# Check of data geladen is EN of de kolom Selecteer bestaat.
+# Zo niet: Repareer het direct.
 if "ID" not in st.session_state.mijn_data.columns:
     st.session_state.mijn_data = laad_data()
+elif "Selecteer" not in st.session_state.mijn_data.columns:
+    st.session_state.mijn_data["Selecteer"] = False
 
 df = st.session_state.mijn_data
 
@@ -160,24 +167,24 @@ with st.sidebar:
 # --- ZOEKEN & HEADER ---
 st.title("🏭 Glas Voorraad")
 
-# on_change=reset_selecties: Zorgt dat vinkjes verdwijnen als je typt (anti-spook-vinkjes)
 zoekterm = st.text_input("Zoeken", placeholder="Typ order, maat...", key="zoek_input", on_change=reset_selecties)
 
-# --- FILTER LOGICA (Voor weergave en telling) ---
+# --- FILTER LOGICA ---
 view_df = df.copy()
 if zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Tel zichtbare selecties
-zichtbare_selectie = view_df[view_df["Selecteer"] == True]
-aantal_geselecteerd = len(zichtbare_selectie)
+# Tel selecties (Veilig)
+if "Selecteer" in view_df.columns:
+    zichtbare_selectie = view_df[view_df["Selecteer"] == True]
+    aantal_geselecteerd = len(zichtbare_selectie)
+else:
+    aantal_geselecteerd = 0
 
 # --- KNOPPEN ---
 if aantal_geselecteerd > 0:
     st.info(f"**{aantal_geselecteerd}** regels geselecteerd om te verwijderen.")
-    
-    # We gebruiken on_click=verwijder_actie. Dit lost de "StreamlitAPIException" op.
     st.button(f"🗑️ Verwijder {aantal_geselecteerd} regels", type="primary", on_click=verwijder_actie)
 
 # --- EDITOR ---
@@ -194,7 +201,7 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- SYNC VINKJES ---
+# --- SYNC ---
 if not edited_df.equals(view_df):
     wijzigingen = dict(zip(edited_df["ID"], edited_df["Selecteer"]))
     st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["ID"].map(wijzigingen).fillna(st.session_state.mijn_data["Selecteer"]).astype(bool)
