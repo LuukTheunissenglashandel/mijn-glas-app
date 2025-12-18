@@ -8,7 +8,7 @@ WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
 # Voeg hier de locaties toe die je in het dropdown-menu wilt zien
-LOCATIE_OPTIES = ["Nog te bepalen", "Rek A1", "Rek A2", "Rek B1", "Rek B2", "Vrachtwagen", "Slijperij", "Hal 1", "Hal 2"]
+LOCATIE_OPTIES = ["HK", "H0", "H1", "Rek H2", "Rek H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "Rek H11", "Rek H12", "H13", "H14", "H15", "H16", "Rek H17", "H18", "H19", "H20"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
@@ -203,3 +203,4 @@ if not edited_df.equals(view_df):
     sla_data_op(st.session_state.mijn_data)
     st.success("Wijziging opgeslagen!")
     st.rerun()
+
