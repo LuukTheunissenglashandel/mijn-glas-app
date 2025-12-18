@@ -10,6 +10,12 @@ DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
+# --- INITIALISATIE SESSION STATE (VOORKOMT ATTRIBUTE ERROR) ---
+if "zoek_input" not in st.session_state:
+    st.session_state.zoek_input = ""
+if "ingelogd" not in st.session_state:
+    st.session_state.ingelogd = False
+
 # --- CSS: DESIGN ---
 st.markdown("""
     <style>
@@ -69,11 +75,9 @@ def laad_data_van_cloud():
     return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
 
 def sla_data_op(df):
-    # BEVEILIGING: Nooit een lege tabel opslaan (behalve als we dat expliciet zouden bouwen)
     if df.empty:
-        st.warning("⚠️ Opslaan geannuleerd: De lijst is leeg. Dit voorkomt dataverlies.")
+        st.warning("⚠️ Opslaan geannuleerd: De lijst is leeg.")
         return
-    
     conn = get_connection()
     save_df = df.copy()
     if "Selecteer" in save_df.columns: save_df = save_df.drop(columns=["Selecteer"])
@@ -92,15 +96,20 @@ def bereken_unieke_orders(df):
     except: return 0
 
 # --- AUTH ---
-if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if not st.session_state.ingelogd:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.markdown("<h2 style='text-align: center;'>🔒 Glas Voorraad</h2>", unsafe_allow_html=True)
-        if st.button("Inloggen", use_container_width=True):
-            # In productie hier wachtwoord checken (st.text_input)
-            st.session_state.ingelogd = True
-            st.rerun()
+        # Hier gebruiken we een formulier zodat Enter werkt
+        with st.form("login_form"):
+            ww = st.text_input("Wachtwoord", type="password", placeholder="Wachtwoord...")
+            submit = st.form_submit_button("Inloggen", use_container_width=True)
+            if submit:
+                if ww == WACHTWOORD:
+                    st.session_state.ingelogd = True
+                    st.rerun()
+                else:
+                    st.error("Fout wachtwoord")
     st.stop()
 
 # --- DATA LOAD ---
@@ -110,7 +119,7 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (EXCEL IMPORT) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
@@ -130,14 +139,12 @@ with st.sidebar:
                 
                 final = nieuwe[["ID"] + DATAKOLOMMEN].astype(str)
                 final.insert(0, "Selecteer", False)
-                
                 st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final], ignore_index=True)
                 sla_data_op(st.session_state.mijn_data)
                 st.success(f"{len(final)} regels toegevoegd!")
                 time.sleep(1)
                 st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
-    
     st.markdown("---")
     if st.button("🔄 Data Herladen"):
         del st.session_state.mijn_data
@@ -167,50 +174,34 @@ except:
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
-    # FASE 3: BEVESTIGING - HIER ZAT HET PROBLEEM
     st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels uit voorraad wilt melden?**")
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
         if st.button("✅ JA, Melden", key="real_del_btn", use_container_width=True):
             ids_weg = geselecteerd_df["ID"].tolist()
-            
-            # 1. Verwijder alleen de geselecteerde ID's uit de data
-            # We gebruiken de ID kolom, dus filter/zoekterm maakt niet uit
             st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
-            
-            # 2. Opslaan
             sla_data_op(st.session_state.mijn_data)
-            
-            # 3. Resetten
             st.session_state.ask_del = False
             st.session_state.mijn_data["Selecteer"] = False
-            
-            # 4. DE OPLOSSING: We maken de zoekbalk leeg!
-            # Hierdoor zie je na de herstart weer ALLES
             st.session_state.zoek_input = "" 
-            
             st.session_state.success_msg = f"✅ {len(ids_weg)} regels verwijderd!"
             st.rerun()
-            
     with col_nee:
         if st.button("❌ ANNULEER", key="cancel_del_btn", use_container_width=True):
             st.session_state.ask_del = False
             st.rerun()
 
 elif aantal_geselecteerd > 0:
-    # FASE 2: ACTIES BIJ SELECTIE
     col_sel, col_loc, col_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
-    
     with col_sel:
         st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
         if st.button("❌ Wissen", key="deselect_btn", use_container_width=True):
             st.session_state.mijn_data["Selecteer"] = False
             st.rerun()
-
     with col_loc:
         c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
         with c_inp:
-            nieuwe_loc = st.text_input("Nieuwe Locatie", placeholder="Naar locatie...", label_visibility="visible")
+            nieuwe_loc = st.text_input("Nieuwe Locatie", placeholder="Naar locatie...")
         with c_btn:
             if st.button("📍 Wijzig", key="bulk_update_btn", use_container_width=True):
                 if nieuwe_loc:
@@ -220,9 +211,8 @@ elif aantal_geselecteerd > 0:
                     st.session_state.mijn_data.loc[mask, "Selecteer"] = False
                     sla_data_op(st.session_state.mijn_data)
                     st.session_state.success_msg = f"📍 {len(ids)} verplaatst naar '{nieuwe_loc}'"
-                    st.session_state.zoek_input = "" # Ook hier zoekterm wissen voor overzicht
+                    st.session_state.zoek_input = "" 
                     st.rerun()
-
     with col_out:
         st.write("") 
         if st.button("📦 Uit voorraad", key="header_del_btn", use_container_width=True):
@@ -230,18 +220,19 @@ elif aantal_geselecteerd > 0:
             st.rerun()
 
 else:
-    # FASE 1: ZOEKEN
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     with c_in:
-        # Key="zoek_input" zorgt dat we hem kunnen resetten via session_state
-        zoekterm = st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input")
+        # Hier linken we de text_input aan session_state["zoek_input"]
+        st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input")
     with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
     with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
     with c_all:
         if st.button("✅ Alles Selecteren", key="select_all_btn", use_container_width=True):
             view = df.copy()
-            if zoekterm:
-                mask = view.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+            # VEILIG ZOEKEN GEBRUIKEN
+            huidige_zoek = st.session_state.get("zoek_input", "")
+            if huidige_zoek:
+                mask = view.astype(str).apply(lambda x: x.str.contains(huidige_zoek, case=False)).any(axis=1)
                 view = view[mask]
             ids = view["ID"].tolist()
             st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(ids), "Selecteer"] = True
@@ -252,17 +243,20 @@ st.markdown('</div>', unsafe_allow_html=True)
 # --- TABEL ---
 view_df = df.copy()
 
+# VEILIGE GETTER VOOR ZOEKTERM
+actieve_zoekterm = st.session_state.get("zoek_input", "")
+
 if aantal_geselecteerd > 0:
     st.caption("Weergave opties:")
     mode = st.radio("Toon:", ["Alles", f"Alleen Selectie ({aantal_geselecteerd})"], horizontal=True, label_visibility="collapsed")
     if "Alleen Selectie" in mode:
         view_df = view_df[view_df["Selecteer"] == True]
-    elif st.session_state.zoek_input:
-         mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
+    elif actieve_zoekterm:
+         mask = view_df.astype(str).apply(lambda x: x.str.contains(actieve_zoekterm, case=False)).any(axis=1)
          view_df = view_df[mask]
 else:
-    if st.session_state.zoek_input:
-        mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
+    if actieve_zoekterm:
+        mask = view_df.astype(str).apply(lambda x: x.str.contains(actieve_zoekterm, case=False)).any(axis=1)
         view_df = view_df[mask]
 
 edited_df = st.data_editor(
