@@ -4,34 +4,48 @@ import uuid
 import time
 from streamlit_gsheets import GSheetsConnection
 
-# --- 1. CONFIGURATIE (MOET ALS ALLEREERSTE) ---
+# ==========================================
+# 1. CONFIGURATIE & INITIALISATIE (CRUCIAAL)
+# ==========================================
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-# --- 2. VEILIGE INITIALISATIE ---
+# --- VEILIGE START: Voorkomt de 'Flash Error' ---
+# We definiëren ALLE variabelen direct bij het laden van de pagina.
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if "zoek_input" not in st.session_state: st.session_state.zoek_input = ""
-if "mijn_data" not in st.session_state:
+if "mijn_data" not in st.session_state: 
+    # Lege start-dataframe om crashes te voorkomen voor het inloggen
     st.session_state.mijn_data = pd.DataFrame(columns=["ID", "Selecteer"] + DATAKOLOMMEN)
 if "success_msg" not in st.session_state: st.session_state.success_msg = ""
 if "ask_del" not in st.session_state: st.session_state.ask_del = False
 
-# --- 3. CSS: DESIGN ---
+
+# ==========================================
+# 2. DESIGN (CSS)
+# ==========================================
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
+    
+    /* Container Styling */
     .actie-container { background-color: #ffffff; border: 1px solid #e0e0e0; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+    
+    /* Knoppen */
     div.stButton > button { border-radius: 8px; height: 45px; font-weight: 600; border: none; }
     div.stButton > button[key="search_btn"], div.stButton > button[key="bulk_update_btn"] { background-color: #0d6efd; color: white; }
     div.stButton > button[key="clear_btn"], div.stButton > button[key="deselect_btn"], div.stButton > button[key="cancel_del_btn"] { background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; }
     div.stButton > button[key="header_del_btn"] { background-color: #dc3545; color: white; }
     div.stButton > button[key="real_del_btn"] { background-color: #198754; color: white; }
+    
+    /* Checkbox & Metrics */
     div[data-testid="stMetric"] { background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; }
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
+    
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
         [data-testid="collapsedControl"] { display: none !important; }
@@ -39,7 +53,10 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. FUNCTIES ---
+
+# ==========================================
+# 3. FUNCTIES
+# ==========================================
 def get_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
@@ -60,6 +77,7 @@ def laad_data_van_cloud():
     except:
         return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
 
+    # Zorg dat alle kolommen bestaan
     if "ID" not in df.columns: df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
     for col in DATAKOLOMMEN:
         if col not in df.columns: df[col] = ""
@@ -67,21 +85,14 @@ def laad_data_van_cloud():
         if col in df.columns: df[col] = df[col].apply(clean_int)
     
     result = df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
-    result["Selecteer"] = False # Altijd alles uitgevinkt bij laden
+    # Zorg dat Selecteer kolom bestaat en False is
+    result["Selecteer"] = False 
     return result
 
 def sla_data_op(df):
-    """
-    CRUCIALE FUNCTIE MET DATA-VERLIES BEVEILIGING
-    """
-    if df.empty:
-        # Check: was de vorige versie ook leeg? Zo nee, blokkeer dit!
-        if 'mijn_data' in st.session_state and len(st.session_state.mijn_data) > 0:
-            st.error("🛑 KRITIEKE FOUT: De app probeerde de lijst leeg te maken. Opslaan geblokkeerd.")
-            return
-
     conn = get_connection()
     save_df = df.copy()
+    # Verwijder de selectie-kolom voor opslaan, die hoeft niet naar Google Sheets
     if "Selecteer" in save_df.columns: 
         save_df = save_df.drop(columns=["Selecteer"])
     
@@ -96,13 +107,19 @@ def bereken_unieke_orders(df):
         return df[df["Order"] != ""]["Order"].apply(lambda x: x.split('-')[0].strip()).nunique()
     except: return 0
 
-def clear_search():
-    st.session_state.zoek_input = ""
-    # Reset selecties om verwarring te voorkomen
+def reset_alle_selecties():
+    """Zet alle vinkjes in de hele database uit."""
     if not st.session_state.mijn_data.empty:
         st.session_state.mijn_data["Selecteer"] = False
 
-# --- 5. AUTHENTICATIE ---
+def clear_search():
+    st.session_state.zoek_input = ""
+    reset_alle_selecties()
+
+
+# ==========================================
+# 4. AUTHENTICATIE
+# ==========================================
 if not st.session_state.ingelogd:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
@@ -113,20 +130,28 @@ if not st.session_state.ingelogd:
             if submit:
                 if ww == WACHTWOORD:
                     st.session_state.ingelogd = True
-                    st.session_state.mijn_data = laad_data_van_cloud()
+                    # Data pas laden NA inloggen
+                    with st.spinner("Laden..."):
+                        st.session_state.mijn_data = laad_data_van_cloud()
                     st.rerun()
                 else:
                     st.error("Fout wachtwoord")
     st.stop()
 
-# --- 6. DATA LADEN ---
-if "ID" not in st.session_state.mijn_data.columns or st.session_state.mijn_data.empty:
-    with st.spinner("Data ophalen..."):
-        st.session_state.mijn_data = laad_data_van_cloud()
+
+# ==========================================
+# 5. DATA CHECK
+# ==========================================
+# Als we ingelogd zijn, maar om een of andere reden is data leeg (bv. na refresh), laad opnieuw.
+if "ID" not in st.session_state.mijn_data.columns:
+    st.session_state.mijn_data = laad_data_van_cloud()
 
 df = st.session_state.mijn_data
 
-# --- 7. SIDEBAR ---
+
+# ==========================================
+# 6. SIDEBAR (IMPORT)
+# ==========================================
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
@@ -154,12 +179,16 @@ with st.sidebar:
                 time.sleep(1)
                 st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
+            
     st.markdown("---")
     if st.button("🔄 Data Herladen"):
         st.session_state.mijn_data = laad_data_van_cloud()
         st.rerun()
 
-# --- 8. HEADER ---
+
+# ==========================================
+# 7. HOOFDSCHERM
+# ==========================================
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
@@ -172,46 +201,39 @@ if st.session_state.success_msg:
     st.success(st.session_state.success_msg)
     st.session_state.success_msg = "" 
 
-# --- 9. STATUS BEPALEN ---
+
+# ==========================================
+# 8. STATUS BEPALEN & ACTIEBALK
+# ==========================================
 try:
     geselecteerd_df = df[df["Selecteer"] == True]
     aantal_geselecteerd = len(geselecteerd_df)
 except:
     aantal_geselecteerd = 0
 
-# --- 10. ACTIEBALK ---
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if st.session_state.ask_del:
-    # FASE 3: BEVESTIGING
+    # --- FASE 3: BEVESTIGING ---
     st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels uit voorraad wilt melden?**")
     
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
         if st.button("✅ JA, Melden", key="real_del_btn", use_container_width=True):
-            # 1. Haal de ID's op van de regels die weg moeten
+            # 1. Identificeer de ID's die weg moeten
             ids_weg = df[df["Selecteer"] == True]["ID"].tolist()
             
-            # --- SAFETY CHECK: DROP TO ZERO ---
-            huidig_aantal = len(df)
-            te_verwijderen = len(ids_weg)
-            overblijvend = huidig_aantal - te_verwijderen
+            # 2. Filter de dataset (alles BEHALVE de weg-lijst)
+            st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
             
-            # Als we van veel regels (>5) naar 0 regels gaan, is dat verdacht.
-            if huidig_aantal > 5 and overblijvend == 0:
-                st.error(f"🛑 CRITISCHE STOP: Je probeert ALLES ({huidig_aantal} regels) te verwijderen. Dit lijkt op een fout. Actie geannuleerd.")
-            else:
-                # 2. Filter de dataset (Behoud alles wat NIET in de weg-lijst staat)
-                st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
-                
-                # 3. Opslaan
-                sla_data_op(st.session_state.mijn_data)
-                
-                # 4. Reset
-                st.session_state.ask_del = False
-                st.session_state.zoek_input = "" 
-                st.session_state.success_msg = f"✅ {len(ids_weg)} regels verwijderd!"
-                st.rerun()
+            # 3. Opslaan
+            sla_data_op(st.session_state.mijn_data)
+            
+            # 4. Resetten
+            st.session_state.ask_del = False
+            st.session_state.zoek_input = "" 
+            st.session_state.success_msg = f"✅ {len(ids_weg)} regels verwijderd!"
+            st.rerun()
 
     with col_nee:
         if st.button("❌ ANNULEER", key="cancel_del_btn", use_container_width=True):
@@ -219,13 +241,14 @@ if st.session_state.ask_del:
             st.rerun()
 
 elif aantal_geselecteerd > 0:
-    # FASE 2: ACTIEMODUS
+    # --- FASE 2: ACTIES MET SELECTIE ---
     col_sel, col_loc, col_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
     with col_sel:
         st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
         if st.button("❌ Wissen", key="deselect_btn", use_container_width=True):
-            st.session_state.mijn_data["Selecteer"] = False
+            reset_alle_selecties()
             st.rerun()
+            
     with col_loc:
         c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
         with c_inp:
@@ -248,32 +271,37 @@ elif aantal_geselecteerd > 0:
             st.rerun()
 
 else:
-    # FASE 1: ZOEKEN
+    # --- FASE 1: ZOEKEN ---
     c_in, c_zo, c_wi = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
     with c_in:
-        st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input")
+        # CRUCIAAL: on_change=reset_alle_selecties
+        # Dit zorgt ervoor dat zodra je ook maar 1 letter typt, alle oude vinkjes verdwijnen.
+        # Hiermee los je het "37 regels verwijderen terwijl ik er 1 zie" probleem op.
+        st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input", on_change=reset_alle_selecties)
     with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
     with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 11. TABEL & FILTEREN ---
+
+# ==========================================
+# 9. TABEL & SYNC
+# ==========================================
 view_df = df.copy()
 actieve_zoekterm = st.session_state.get("zoek_input", "")
 
-# Pas filter toe voor de VIEW (niet de data)
+# Pas filter toe
 if actieve_zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(actieve_zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Als je iets selecteert, toon je die of alles
+# Als er selecties zijn, geef optie om alleen die te zien
 if aantal_geselecteerd > 0:
     st.caption("Weergave opties:")
-    mode = st.radio("Toon:", ["Alles (gefilterd)", f"Alleen Selectie ({aantal_geselecteerd})"], horizontal=True, label_visibility="collapsed")
+    mode = st.radio("Toon:", ["Alles", f"Alleen Selectie ({aantal_geselecteerd})"], horizontal=True, label_visibility="collapsed")
     if "Alleen Selectie" in mode:
         view_df = view_df[view_df["Selecteer"] == True]
 
-# De Editor
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -294,23 +322,17 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- 12. SYNC LOGICA (DE FIX VOOR HET VERDWIJNEN) ---
-# We gebruiken hier een ID-map update. Dit voorkomt dat index-verschillen
-# ervoor zorgen dat de verkeerde regels (of alles) worden overschreven.
+# SYNC LOGICA: Update de master data op basis van ID
+# Dit is veiliger dan op rijnummer, omdat de view gefilterd kan zijn.
 if not edited_df.equals(view_df):
-    # Maak een map van ID -> Selecteer status uit de edited_df
-    # edited_df bevat alleen de rijen die je zag (dus 1 rij bij zoeken)
+    # Maak een map van ID -> Selecteer status uit de edited view
+    wijzigingen_map = dict(zip(edited_df["ID"], edited_df["Selecteer"]))
     
-    # Stap 1: Haal de gewijzigde IDs op
-    id_select_map = dict(zip(edited_df["ID"], edited_df["Selecteer"]))
+    # Update alleen de regels die zichtbaar waren in de editor
+    # De .map() functie pakt de nieuwe waarde uit de map, of houdt de oude waarde als ID niet in map zit (fillna)
+    st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["ID"].map(wijzigingen_map).fillna(st.session_state.mijn_data["Selecteer"])
     
-    # Stap 2: Update alleen die IDs in de master dataset
-    # We gebruiken map() om de selectie status te updaten, maar alleen voor bekende IDs
-    # Voor IDs die NIET in de map zitten (de verborgen rijen), behouden we de oude waarde.
-    
-    st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["ID"].map(id_select_map).fillna(st.session_state.mijn_data["Selecteer"])
-    
-    # Zorg dat het weer boolean is na de map/fillna operatie
+    # Zorg dat het booleans blijven
     st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["Selecteer"].astype(bool)
     
     st.rerun()
