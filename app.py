@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import uuid
+import time
 from streamlit_gsheets import GSheetsConnection
 
 # --- 1. CONFIGURATIE ---
@@ -20,7 +21,6 @@ def laad_data():
         df = conn.read(worksheet="Blad1", ttl=0)
         if df is None or df.empty:
             return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
-        # Zorg voor unieke IDs
         if "ID" not in df.columns:
             df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
         return df.fillna("").astype(str)
@@ -29,8 +29,8 @@ def laad_data():
 
 def sla_op(df):
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # Verwijder hulpkolommen voor opslaan
-    save_df = df[[col for col in df.columns if col in (["ID"] + DATAKOLOMMEN)]]
+    # Alleen de echte datakolommen opslaan
+    save_df = df[["ID"] + DATAKOLOMMEN]
     conn.update(worksheet="Blad1", data=save_df)
     st.cache_data.clear()
 
@@ -43,78 +43,87 @@ if not st.session_state.ingelogd:
             st.session_state.ingelogd = True
             st.session_state.data = laad_data()
             st.rerun()
+        else:
+            st.error("Fout wachtwoord")
     st.stop()
 
-# --- 4. DATA CONTROLE ---
+# --- 4. DATA LADEN ---
 if st.session_state.data.empty:
     st.session_state.data = laad_data()
+
+df_master = st.session_state.data
 
 # --- 5. INTERFACE ---
 st.title("🏭 Glas Voorraad")
 
-# Zoekbalk
-zoekterm = st.text_input("🔍 Zoeken op order, maat of locatie", placeholder="Typ hier om te filteren...")
+# Zoeksectie
+zoekterm = st.text_input("🔍 Zoeken", placeholder="Typ ordernummer, maat of locatie...")
 
-# Filteren van de dataset
-df_display = st.session_state.data.copy()
+# Filter de data voor weergave
+df_view = df_master.copy()
 if zoekterm:
-    mask = df_display.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
-    df_display = df_display[mask]
+    mask = df_view.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+    df_view = df_view[mask]
 
-# --- 6. DE TABEL MET DIRECTE ACTIEKNOP ---
-# Hier gebruiken we de ButtonColumn. Dit is VEILIGER dan checkboxes.
-st.write(f"Resultaten: {len(df_display)} ruiten gevonden.")
-
-event = st.data_editor(
-    df_display,
-    column_config={
-        "ID": None, # Verberg ID
-        "Meld": st.column_config.ButtonColumn(
-            "Actie",
-            help="Meld deze ruit direct uit voorraad",
-            default_value="Uit voorraad",
-        ),
-    },
-    disabled=DATAKOLOMMEN, # Je kunt de data zelf niet per ongeluk wijzigen
-    hide_index=True,
+# Toon de tabel (Puur weergave, dit kan niet crashen)
+st.dataframe(
+    df_view.drop(columns=["ID"]), 
+    hide_index=True, 
     use_container_width=True,
-    key="voorraad_tabel"
+    height=400
 )
 
-# --- 7. VERWERK VERWIJDERING ---
-# Als er op de knop in een rij is geklikt:
-if event["last_clicked_column"] == "Meld":
-    rij_index = event["last_clicked_row"]
-    # Pak het unieke ID van de ruit in de GEFILTERDE lijst
-    ruit_id = df_display.iloc[rij_index]["ID"]
-    ruit_order = df_display.iloc[rij_index]["Order"]
+# --- 6. HET UIT VOORRAAD MELDEN (DE FIX) ---
+st.markdown("---")
+st.subheader("📦 Uit voorraad melden")
 
-    # Voer de verwijdering uit op de HOOFD-dataset
-    nieuwe_data = st.session_state.data[st.session_state.data["ID"] != ruit_id]
-    
-    # Update sessie en Google Sheets
-    st.session_state.data = nieuwe_data
-    sla_op(nieuwe_data)
-    
-    st.toast(f"✅ Order {ruit_order} is uit voorraad gemeld.")
-    st.rerun()
+if not df_view.empty:
+    # Maak een lijst van ruiten die de gebruiker nu ziet
+    # We maken een tekstlabel zodat de gebruiker weet wat hij kiest
+    opties = {}
+    for _, row in df_view.iterrows():
+        label = f"Order: {row['Order']} | Maat: {row['Breedte']}x{row['Hoogte']} | Locatie: {row['Locatie']}"
+        opties[label] = row["ID"]
 
-# --- 8. EXTRA OPTIES ---
-with st.expander("➕ Nieuwe ruiten toevoegen (Excel)"):
-    uploaded_file = st.file_uploader("Kies Excel bestand", type=["xlsx"])
-    if uploaded_file and st.button("Uploaden"):
-        nieuwe_data = pd.read_excel(uploaded_file).astype(str)
-        nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
-        # Alleen relevante kolommen behouden
-        for col in DATAKOLOMMEN:
-            if col not in nieuwe_data.columns: nieuwe_data[col] = ""
+    selected_label = st.selectbox(
+        "Welke ruit moet uit de voorraad?",
+        options=["-- Maak een keuze --"] + list(opties.keys()),
+        help="Alleen ruiten uit je zoekresultaat worden hier getoond."
+    )
+
+    if selected_label != "-- Maak een keuze --":
+        ruit_id = opties[selected_label]
         
-        updated_df = pd.concat([st.session_state.data, nieuwe_data], ignore_index=True)
+        if st.button("✅ Bevestig: Verwijder uit voorraad", type="primary"):
+            # Verwijder de ruit op basis van het unieke ID uit de hoofdlijst
+            nieuwe_data = df_master[df_master["ID"] != ruit_id].copy()
+            
+            # Opslaan en sessie bijwerken
+            st.session_state.data = nieuwe_data
+            sla_op(nieuwe_data)
+            
+            st.success(f"Verwijderd: {selected_label}")
+            time.sleep(1)
+            st.rerun()
+else:
+    st.info("Geen ruiten gevonden om te selecteren.")
+
+# --- 7. TOEVOEGEN ---
+with st.expander("➕ Nieuwe voorraad toevoegen"):
+    up = st.file_uploader("Upload Excel", type=["xlsx"])
+    if up and st.button("Excel Verwerken"):
+        nieuwe_ruiten = pd.read_excel(up).astype(str)
+        nieuwe_ruiten["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_ruiten))]
+        for col in DATAKOLOMMEN:
+            if col not in nieuwe_ruiten.columns: nieuwe_ruiten[col] = ""
+        
+        updated_df = pd.concat([df_master, nieuwe_ruiten], ignore_index=True)
         st.session_state.data = updated_df
         sla_op(updated_df)
-        st.success("Data toegevoegd!")
+        st.success("Voorraad bijgewerkt!")
+        time.sleep(1)
         st.rerun()
 
-if st.button("🔄 Ververs volledige lijst"):
+if st.button("🔄 Lijst volledig verversen"):
     st.session_state.data = laad_data()
     st.rerun()
