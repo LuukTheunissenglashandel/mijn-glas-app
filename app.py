@@ -6,7 +6,6 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-# Volgorde: Locatie, Aantal, Breedte, Hoogte, Order, Uit voorraad, Omschrijving, Spouw
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
@@ -18,7 +17,6 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Styling voor de actie-container (alleen zichtbaar bij selectie) */
     .actie-container {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -100,9 +98,10 @@ def sla_data_op(df):
     if "Selecteer" in save_df.columns:
         save_df = save_df.drop(columns=["Selecteer"])
     
-    for col in ["Uit voorraad"]:
-        if col in save_df.columns:
-            save_df[col] = save_df[col].astype(str)
+    # Forceer tekst-opslag voor boolean kolommen
+    if "Uit voorraad" in save_df.columns:
+        save_df["Uit voorraad"] = save_df["Uit voorraad"].astype(str)
+
     try:
         conn.update(worksheet="Blad1", data=save_df)
         st.cache_data.clear()
@@ -132,8 +131,13 @@ if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
     st.session_state.mijn_data.insert(0, "Selecteer", False)
 
-# Zorg voor de juiste types voor checkbox en berekeningen
-st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["Selecteer"].map({'True': True, 'False': False, True: True, False: False})
+# Veilige conversie voor Selecteer kolom (interne UI staat)
+def to_bool(val):
+    return str(val).lower() == "true"
+
+if isinstance(st.session_state.mijn_data["Selecteer"].iloc[0], str):
+    st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["Selecteer"].apply(to_bool)
+
 df = st.session_state.mijn_data
 
 # --- SIDEBAR ---
@@ -164,8 +168,8 @@ with st.sidebar:
         st.rerun()
 
 # --- KPI BEREKENING ---
-# We filteren op regels die NIET uit voorraad zijn
-active_mask = (df["Uit voorraad"].astype(str).str.lower() == "false") | (df["Uit voorraad"].astype(str) == "")
+# We gebruiken een robuustere check voor KPI's
+active_mask = df["Uit voorraad"].astype(str).str.upper() != "TRUE"
 active_df = df[active_mask]
 
 # --- HEADER & KPI's ---
@@ -221,8 +225,8 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Zet strings om naar booleans voor de weergave
-view_df["Uit voorraad"] = view_df["Uit voorraad"].map({'True': True, 'False': False, True: True, False: False})
+# ROBUUSTERE BOOLEARN CONVERSIE (VERVANGT DE CRASHENDE .MAP FUNCTIE)
+view_df["Uit voorraad"] = view_df["Uit voorraad"].astype(str).str.upper() == "TRUE"
 
 def highlight_stock(s):
     return ['background-color: #ff4b4b; color: white' if s["Uit voorraad"] else '' for _ in s]
@@ -238,7 +242,6 @@ edited_df = st.data_editor(
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
-        # Aangepaste titel met newline en breedte
         "Uit voorraad": st.column_config.CheckboxColumn("Uit voorraad\nmelden", default=False, width="small"),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
@@ -252,6 +255,11 @@ edited_df = st.data_editor(
 )
 
 if not edited_df.equals(view_df):
+    # Converteer booleans terug naar tekst voor opslag in session state
+    for col in ["Uit voorraad", "Selecteer"]:
+        if col in edited_df.columns:
+            edited_df[col] = edited_df[col].astype(str)
+            
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
     st.rerun()
