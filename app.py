@@ -122,7 +122,7 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR (IMPORT) ---
+# --- SIDEBAR (ALLEEN IMPORT) ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
@@ -146,13 +146,8 @@ with st.sidebar:
                 st.rerun()
             except Exception as e:
                 st.error(f"Fout: {e}")
-    st.markdown("---")
-    if st.button("🔄 Data Herladen"):
-        del st.session_state.mijn_data
-        st.rerun()
 
 # --- KPI BEREKENING ---
-# Filter actieve ruiten (alles wat NIET 'True' is)
 active_mask = df["Uit voorraad"].astype(str).str.upper() != "TRUE"
 active_df = df[active_mask]
 
@@ -183,10 +178,8 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Omzetten naar booleans voor de checkbox-weergave
 view_df["Uit voorraad"] = view_df["Uit voorraad"].astype(str).str.upper() == "TRUE"
 
-# Kleurfunctie voor de rode regels
 def highlight_stock(s):
     return ['background-color: #ff4b4b; color: white' if s["Uit voorraad"] else '' for _ in s]
 
@@ -204,7 +197,7 @@ edited_df = st.data_editor(
         "Uit voorraad": st.column_config.CheckboxColumn("Uit voorraad\nmelden", default=False, width="small"),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
-        "ID": None # Verberg ID kolom
+        "ID": None 
     },
     disabled=["ID"],
     hide_index=True,
@@ -213,12 +206,9 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# Opslaan bij wijzigingen
 if not edited_df.equals(view_df):
-    # Converteer booleans weer naar tekst voor de database
     update_df = edited_df.copy()
     update_df["Uit voorraad"] = update_df["Uit voorraad"].astype(str)
-    
     st.session_state.mijn_data.update(update_df)
     sla_data_op(st.session_state.mijn_data)
     st.rerun()
