@@ -1,36 +1,36 @@
 import streamlit as st
 import pandas as pd
 import uuid
-import time
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-# Volgorde: Locatie, Aantal, Breedte, Hoogte, Order, Uit voorraad, Omschrijving, Spouw
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
+
+# Voeg hier de locaties toe die je in het dropdown-menu wilt zien
+LOCATIE_OPTIES = ["Nog te bepalen", "Rek A1", "Rek A2", "Rek B1", "Rek B2", "Vrachtwagen", "Slijperij", "Hal 1", "Hal 2"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: PROFESSIONAL DESIGN ---
+# --- CSS: TABLET & TOUCH OPTIMALISATIE ---
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
+    /* Knoppen groter voor duimen */
     div.stButton > button { 
-        border-radius: 8px; height: 45px; font-weight: 600; border: none; 
+        border-radius: 8px; height: 50px; font-weight: 600; border: none; 
     }
     
-    div.stButton > button[key="search_btn"] { background-color: #0d6efd; color: white; }
-    div.stButton > button[key="clear_btn"] { background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; }
-
-    div[data-testid="stMetric"] {
-        background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px;
+    /* Maak de rijen in de editor hoger voor touch-selectie */
+    [data-testid="stDataEditor"] div {
+        line-height: 1.8 !important;
     }
 
-    /* Checkbox groter voor makkelijker klikken */
-    input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
+    /* Checkbox visueel groter maken */
+    input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
 
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
@@ -66,7 +66,6 @@ def laad_data_van_cloud():
         if col not in df.columns: 
             df[col] = "Nee" if col == "Uit voorraad" else ""
 
-    # Forceer "Uit voorraad" naar Ja/Nee tekst voor stabiliteit
     if "Uit voorraad" in df.columns:
         df["Uit voorraad"] = df["Uit voorraad"].astype(str).apply(
             lambda x: "Ja" if x.lower() in ["true", "ja", "1", "yes"] else "Nee"
@@ -80,7 +79,6 @@ def laad_data_van_cloud():
 def sla_data_op(df):
     if df.empty: return
     conn = get_connection()
-    # Maak een kopie en zorg dat alles platte tekst is voor de cloud
     save_df = df.copy().astype(str)
     try:
         conn.update(worksheet="Blad1", data=save_df)
@@ -144,7 +142,7 @@ with c3:
 
 # --- ZOEKBALK ---
 c_in, c_zo, c_wi = st.columns([7, 1, 1], gap="small", vertical_alignment="bottom")
-with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek...", label_visibility="collapsed", key="zoek_input")
+with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed", key="zoek_input")
 with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
 with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
@@ -156,7 +154,7 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# BELANGRIJK: Omzetten naar echte booleans ALLEEN voor het tonen van de checkbox
+# Hulpmiddel voor checkbox
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
 def highlight_stock(s):
@@ -164,36 +162,44 @@ def highlight_stock(s):
 
 styled_view = view_df.style.apply(highlight_stock, axis=1)
 
+# DATA EDITOR
 edited_df = st.data_editor(
     styled_view,
     column_config={
-        "Locatie": st.column_config.TextColumn("Locatie", width="small"),
+        # LOCATIE ALS SELECTBOX (Tablet-vriendelijk)
+        "Locatie": st.column_config.SelectboxColumn(
+            "📍 Locatie", 
+            width="medium",
+            options=LOCATIE_OPTIES,
+            required=True
+        ),
         "Aantal": st.column_config.TextColumn("Aant.", width="small"),
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
-        # Hier is het vinkje terug voor 1-klik actie
-        "Uit voorraad_bool": st.column_config.CheckboxColumn("Uit voorraad\nmelden", width="small", default=False),
+        "Uit voorraad_bool": st.column_config.CheckboxColumn("✅ Uit voorraad", width="small"),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
         "ID": None,
-        "Uit voorraad": None # Verberg de tekst kolom
+        "Uit voorraad": None 
     },
-    disabled=["ID", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"], # Alleen checkbox klikbaar maken voor snelheid
+    # Alleen Locatie en de Checkbox zijn aanpasbaar
+    disabled=["Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"],
     hide_index=True,
     use_container_width=True,
     height=700,
     key="editor"
 )
 
-# VERWERKING VAN DE KLIK
+# VERWERKING EN OPSLAG
 if not edited_df.equals(view_df):
-    # Vertaal de checkbox-klik direct terug naar Ja/Nee tekst
+    # Synchroniseer checkbox status naar Ja/Nee tekst
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
     
-    # Update de hoofd-dataset
-    st.session_state.mijn_data.update(edited_df[["ID", "Uit voorraad"]])
+    # Update de hoofd-dataset (ID is de sleutel, Locatie en Uit voorraad worden bijgewerkt)
+    st.session_state.mijn_data.update(edited_df[["ID", "Locatie", "Uit voorraad"]])
     
-    # Sla op naar Google Sheets
+    # Sla alles op naar Google Sheets
     sla_data_op(st.session_state.mijn_data)
+    st.success("Wijziging opgeslagen!")
     st.rerun()
