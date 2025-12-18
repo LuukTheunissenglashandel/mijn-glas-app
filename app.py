@@ -1,117 +1,164 @@
 import streamlit as st
 import pandas as pd
 import uuid
-import time
 from streamlit_gsheets import GSheetsConnection
 
-# --- 1. SETUP ---
-st.set_page_config(layout="wide", page_title="Glas Voorraad")
-WACHTWOORD = "glas123"
-DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
+# --- 1. CONFIGURATIE & THEMA ---
+st.set_page_config(
+    layout="wide", 
+    page_title="Glas Voorraad Dashboard", 
+    initial_sidebar_state="collapsed"
+)
 
-if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
-if "zoek_input" not in st.session_state: st.session_state.zoek_input = ""
-
-# --- 2. CSS: HET MOOIE DESIGN ---
+# Professionele Styling voor Tablet (Samsung A9)
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 5rem; }
-    .actie-container {
-        background-color: #ffffff; border: 1px solid #e0e0e0; padding: 20px;
-        border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px;
+    /* Algemene font en achtergrond */
+    .main { background-color: #f8f9fa; }
+    
+    /* Maak metrics groter voor op een tablet */
+    div[data-testid="stMetric"] {
+        background-color: #ffffff;
+        border: 1px solid #dee2e6;
+        padding: 20px;
+        border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
     }
-    div[data-testid="stMetric"] { background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; }
+    
+    /* Zoekbalk styling */
+    .stTextInput input {
+        height: 60px !important;
+        font-size: 20px !important;
+        border-radius: 12px !important;
+    }
+    
+    /* Tabel styling */
+    .stDataFrame {
+        border: 1px solid #dee2e6;
+        border-radius: 12px;
+        background-color: #ffffff;
+    }
+
+    /* Verberg overbodige Streamlit menu's */
+    #MainMenu, footer, header {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. FUNCTIES ---
+WACHTWOORD = "glas123"
+DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
+
+# --- 2. FUNCTIES ---
 def laad_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     try:
+        # ttl=0 zorgt dat we altijd de allerlaatste versie uit de sheet zien
         df = conn.read(worksheet="Blad1", ttl=0)
-        if df is None or df.empty: return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
-        if "ID" not in df.columns: df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
+        if df is None or df.empty:
+            return pd.DataFrame(columns=DATAKOLOMMEN)
         return df.fillna("").astype(str)
-    except: return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
+    except:
+        return pd.DataFrame(columns=DATAKOLOMMEN)
 
 def sla_op(df):
     conn = st.connection("gsheets", type=GSheetsConnection)
-    conn.update(worksheet="Blad1", data=df[["ID"] + DATAKOLOMMEN])
+    conn.update(worksheet="Blad1", data=df)
     st.cache_data.clear()
 
-# --- 4. AUTH ---
+# --- 3. AUTHENTICATIE ---
+if "ingelogd" not in st.session_state:
+    st.session_state.ingelogd = False
+
 if not st.session_state.ingelogd:
+    st.markdown("<h1 style='text-align: center;'>🏭 Glas Voorraad</h1>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.title("🔒 Login")
-        ww = st.text_input("Wachtwoord", type="password")
-        if st.button("Start", use_container_width=True):
-            if ww == WACHTWOORD:
-                st.session_state.ingelogd = True
-                st.rerun()
+        with st.form("login_form"):
+            ww = st.text_input("Wachtwoord", type="password")
+            if st.form_submit_button("Start Dashboard", use_container_width=True):
+                if ww == WACHTWOORD:
+                    st.session_state.ingelogd = True
+                    st.rerun()
+                else:
+                    st.error("Wachtwoord onjuist")
     st.stop()
 
-if 'mijn_data' not in st.session_state:
-    st.session_state.mijn_data = laad_data()
+# --- 4. DATA LADEN ---
+# We laden de data elke keer opnieuw als de pagina ververst wordt (voor de tablet)
+df_master = laad_data()
 
-# --- 5. DASHBOARD ---
-df_master = st.session_state.mijn_data
-c1, c2, c3 = st.columns([2, 1, 1])
-with c1: st.title("🏭 Glas Voorraad")
-with c2: st.metric("Totaal Ruiten", len(df_master))
-with c3: st.metric("Unieke Orders", df_master["Order"].nunique())
+# --- 5. DASHBOARD HEADER ---
+st.title("🏭 Glas Voorraad Dashboard")
 
-# --- 6. ZOEKEN ---
-st.markdown('<div class="actie-container">', unsafe_allow_html=True)
-c1, c2 = st.columns([6, 1])
-with c1: 
-    zoekterm = st.text_input("Zoek ruit...", value=st.session_state.zoek_input, label_visibility="collapsed")
-with c2: 
-    if st.button("Wis Zoekopdracht", use_container_width=True):
-        st.session_state.zoek_input = ""
-        st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
+# KPI's (Metrics) bovenaan - Groot en duidelijk op tablet
+c1, c2, c3 = st.columns(3)
+with c1:
+    try:
+        totaal_ruiten = df_master["Aantal"].astype(float).sum()
+        st.metric("Totaal Ruiten", int(totaal_ruiten))
+    except:
+        st.metric("Totaal Ruiten", "0")
 
-# --- 7. TABEL WEERGAVE ---
+with c2:
+    unieke_orders = df_master["Order"].nunique()
+    st.metric("Aantal Orders", unieke_orders)
+
+with c3:
+    unieke_locaties = df_master["Locatie"].nunique()
+    st.metric("Aantal Locaties", unieke_locaties)
+
+st.markdown("---")
+
+# --- 6. ZOEKEN & FILTEREN ---
+# Extra grote zoekbalk voor makkelijk typen op een tablet
+zoekterm = st.text_input("🔍 Zoek ruit...", placeholder="Typ order, afmeting of locatie...")
+
 df_view = df_master.copy()
 if zoekterm:
+    # Filtert door alle kolommen heen
     mask = df_view.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     df_view = df_view[mask]
 
-# We voegen een tijdelijk rij-nummer toe dat je kunt typen
-df_view.insert(0, "NR", range(1, len(df_view) + 1))
+# --- 7. DE VOORRAAD TABEL ---
+st.subheader(f"Voorraadlijst ({len(df_view)} resultaten)")
 
-st.dataframe(df_view.drop(columns=["ID"]), hide_index=True, use_container_width=True, height=400)
+# We tonen de tabel in 'Read Only' modus. 
+# Dit is extreem robuust en kan niet crashen of data wissen.
+st.dataframe(
+    df_view[DATAKOLOMMEN], 
+    use_container_width=True, 
+    height=600, 
+    hide_index=True
+)
 
-# --- 8. UIT VOORRAAD MELDEN (DE NUMMER METHODE) ---
-st.markdown("---")
-if not df_view.empty:
-    st.subheader("🗑️ Uit voorraad melden")
-    col_a, col_b = st.columns([1, 2])
-    with col_a:
-        nr_to_del = st.number_input("Typ het NR uit de tabel:", min_value=0, max_value=len(df_view), step=1, value=0)
-    with col_b:
-        st.write("") # uitlijning
-        if nr_to_del > 0:
-            # Pak de data van die specifieke rij uit de VIEW
-            target_row = df_view.iloc[nr_to_del - 1]
-            if st.button(f"Meld Order {target_row['Order']} uit voorraad", type="primary"):
-                # Verwijder op basis van ID uit de MASTER
-                st.session_state.mijn_data = df_master[df_master["ID"] != target_row["ID"]]
-                sla_op(st.session_state.mijn_data)
-                st.success("Verwijderd!")
-                time.sleep(1)
-                st.rerun()
-else:
-    st.info("Geen resultaten gevonden.")
-
-# --- 9. IMPORT ---
+# --- 8. SIDEBAR (IMPORT & REFRESH) ---
 with st.sidebar:
-    st.subheader("📥 Import")
-    up = st.file_uploader("Excel", type=["xlsx"])
-    if up and st.button("Upload"):
-        new = pd.read_excel(up).astype(str)
-        new["ID"] = [str(uuid.uuid4()) for _ in range(len(new))]
-        st.session_state.mijn_data = pd.concat([df_master, new], ignore_index=True)
-        sla_op(st.session_state.mijn_data)
+    st.header("⚙️ Beheer")
+    
+    if st.button("🔄 Ververs Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    
+    st.markdown("---")
+    st.subheader("📥 Excel Import")
+    uploaded_file = st.file_uploader("Upload nieuwe voorraad", type=["xlsx"])
+    
+    if uploaded_file:
+        if st.button("📤 Toevoegen aan Sheets", use_container_width=True):
+            try:
+                nieuwe_data = pd.read_excel(uploaded_file).astype(str)
+                # Alleen kolommen behouden die we nodig hebben
+                for col in DATAKOLOMMEN:
+                    if col not in nieuwe_data.columns:
+                        nieuwe_data[col] = ""
+                
+                updated_df = pd.concat([df_master, nieuwe_data[DATAKOLOMMEN]], ignore_index=True)
+                sla_op(updated_df)
+                st.success("Voorraad succesvol bijgewerkt!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Fout bij upload: {e}")
+
+    st.markdown("---")
+    if st.button("Log uit"):
+        st.session_state.ingelogd = False
         st.rerun()
