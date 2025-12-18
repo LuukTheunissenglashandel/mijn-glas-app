@@ -6,11 +6,12 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
+# Kolom "Status" toegevoegd aan de data-structuur
+DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order", "Status"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: PROFESSIONAL DESIGN ---
+# --- CSS: DESIGN & RESPONSIVENESS ---
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
@@ -76,36 +77,49 @@ def clean_int(val):
         if val is None or str(val).strip() == "": return ""
         s_val = str(val).replace(',', '.').strip()
         return str(int(float(s_val)))
-    except: return str(val)
+    except:
+        return str(val)
 
 def laad_data_van_cloud():
     conn = get_connection()
     try:
         df = conn.read(worksheet="Blad1", ttl=0)
-        if df is None or df.empty: return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
-    except: return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
+        if df is None or df.empty:
+            return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
+    except:
+        return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
 
     if "ID" not in df.columns:
         df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
     
     for col in DATAKOLOMMEN:
         if col not in df.columns: df[col] = ""
+
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
         if col in df.columns: df[col] = df[col].apply(clean_int)
             
     return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
 
 def sla_data_op(df):
-    if df.empty:
-        st.warning("⚠️ Opslaan geannuleerd: De tabel is leeg!")
-        return
     conn = get_connection()
     save_df = df.copy()
-    if "Selecteer" in save_df.columns: save_df = save_df.drop(columns=["Selecteer"])
+    if "Selecteer" in save_df.columns:
+        save_df = save_df.drop(columns=["Selecteer"])
+    conn.update(worksheet="Blad1", data=save_df)
+    st.cache_data.clear()
+
+def clear_search():
+    st.session_state.zoek_input = ""
+
+def bereken_unieke_orders(df):
     try:
-        conn.update(worksheet="Blad1", data=save_df)
-        st.cache_data.clear()
-    except Exception as e: st.error(f"Fout bij opslaan: {e}")
+        # Alleen orders tellen die nog "In Voorraad" zijn (of leeg status hebben)
+        actieve_df = df[df["Status"] != "Uit Voorraad"]
+        orders = actieve_df[actieve_df["Order"] != ""]["Order"].astype(str)
+        basis_orders = orders.apply(lambda x: x.split('-')[0].strip())
+        return basis_orders.nunique()
+    except:
+        return 0
 
 # --- AUTH ---
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
@@ -118,7 +132,8 @@ if not st.session_state.ingelogd:
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
                 st.rerun()
-            else: st.error("Fout wachtwoord")
+            else:
+                st.error("Fout wachtwoord")
     st.stop()
 
 # --- DATA INITIALISATIE ---
@@ -126,136 +141,197 @@ if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
     st.session_state.mijn_data.insert(0, "Selecteer", False)
 
-if 'zoek_input' not in st.session_state: st.session_state.zoek_input = ""
+df = st.session_state.mijn_data
 
-# --- SIDEBAR IMPORT ---
+# --- SIDEBAR (ALLEEN EXCEL & RELOAD) ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
-    uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
-    if uploaded_file and st.button("📤 Toevoegen aan voorraad", key="upload_btn"):
-        try:
-            nieuwe_data = pd.read_excel(uploaded_file)
-            nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
-            mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
-            nieuwe_data = nieuwe_data.rename(columns=mapping)
-            nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
-            if "Locatie" not in nieuwe_data.columns: nieuwe_data["Locatie"] = ""
-            for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
-                if col in nieuwe_data.columns: nieuwe_data[col] = nieuwe_data[col].apply(clean_int)
-            
-            final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
-            final_upload.insert(0, "Selecteer", False)
-            st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
-            sla_data_op(st.session_state.mijn_data)
-            st.success("✅ Toegevoegd!")
-            time.sleep(1)
-            st.rerun()
-        except Exception as e: st.error(f"Fout: {e}")
+    uploaded_excel = st.file_uploader("Excel kiezen", type=["xlsx"], label_visibility="collapsed", key="u_excel")
+    if uploaded_excel:
+        if st.button("📤 Excel toevoegen", key="upload_excel_btn"):
+            try:
+                nieuwe_data = pd.read_excel(uploaded_excel)
+                nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
+                mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
+                nieuwe_data = nieuwe_data.rename(columns=mapping)
+                
+                nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
+                nieuwe_data["Status"] = "In Voorraad"
+                if "Locatie" not in nieuwe_data.columns: nieuwe_data["Locatie"] = ""
+                
+                for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
+                    if col in nieuwe_data.columns: nieuwe_data[col] = nieuwe_data[col].apply(clean_int)
+                for c in DATAKOLOMMEN:
+                    if c not in nieuwe_data.columns: nieuwe_data[c] = ""
+                
+                final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
+                final_upload.insert(0, "Selecteer", False)
+                
+                st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
+                sla_data_op(st.session_state.mijn_data)
+                st.success(f"✅ {len(final_upload)} regels toegevoegd!")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Fout: {e}")
+
     st.markdown("---")
     if st.button("🔄 Data Herladen"):
-        st.session_state.mijn_data = laad_data_van_cloud()
-        st.session_state.mijn_data.insert(0, "Selecteer", False)
+        del st.session_state.mijn_data
         st.rerun()
 
-# --- FILTER LOGICA ---
-df_master = st.session_state.mijn_data
-zoekterm = st.session_state.zoek_input
-view_df = df_master.copy()
-if zoekterm:
-    mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
-    view_df = view_df[mask]
-
-# --- STATUS BEPALEN (Echt geselecteerd binnen view) ---
-echt_geselecteerd = view_df[view_df["Selecteer"] == True]
-aantal_geselecteerd = len(echt_geselecteerd)
-
-# --- HEADER & KPI ---
+# --- HEADER & KPI's ---
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
-    try: tot = df_master["Aantal"].astype(float).sum()
+    try: 
+        # Alleen ruiten tellen die nog in voorraad zijn
+        tot = df[df["Status"] != "Uit Voorraad"]["Aantal"].replace('', '0').astype(int).sum()
     except: tot = 0
-    st.metric("Totaal Ruiten", int(tot))
-with c3: 
-    try: n = df_master[df_master["Order"] != ""]["Order"].nunique()
-    except: n = 0
-    st.metric("Unieke Orders", n)
+    st.metric("In Voorraad", tot)
+with c3: st.metric("Unieke Orders", bereken_unieke_orders(df))
 
-# --- ACTIEBALK ---
+# --- SUCCES MELDING ---
+if 'success_msg' in st.session_state and st.session_state.success_msg:
+    st.success(st.session_state.success_msg)
+    st.session_state.success_msg = "" 
+
+# --- STATUS ---
+try:
+    geselecteerd_df = df[df["Selecteer"] == True]
+    aantal_geselecteerd = len(geselecteerd_df)
+except:
+    aantal_geselecteerd = 0
+
+# --- ACTIEBALK CONTAINER ---
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
+
 if st.session_state.get('ask_del'):
-    st.warning(f"⚠️ Weet je zeker dat je **{aantal_geselecteerd}** regels wilt verwijderen?")
-    c_ja, c_nee = st.columns([1, 1])
-    with c_ja:
-        if st.button("✅ JA, Melden", key="real_del_btn", use_container_width=True):
-            ids_weg = echt_geselecteerd["ID"].tolist()
-            st.session_state.mijn_data = df_master[~df_master["ID"].isin(ids_weg)]
+    st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels als 'Uit Voorraad' wilt markeren?**")
+    col_ja, col_nee = st.columns([1, 1])
+    with col_ja:
+        if st.button("✅ JA, Markeren", key="real_del_btn", use_container_width=True):
+            ids_te_wijzigen = geselecteerd_df["ID"].tolist()
+            # In plaats van verwijderen, de status aanpassen
+            masker = st.session_state.mijn_data["ID"].isin(ids_te_wijzigen)
+            st.session_state.mijn_data.loc[masker, "Status"] = "Uit Voorraad"
+            st.session_state.mijn_data.loc[masker, "Selecteer"] = False
+            
             sla_data_op(st.session_state.mijn_data)
             st.session_state.ask_del = False
-            st.session_state.zoek_input = ""
-            st.success("Verwijderd!")
-            time.sleep(1)
+            st.session_state.success_msg = f"✅ {len(ids_te_wijzigen)} regels gemarkeerd als Uit Voorraad!"
             st.rerun()
-    with c_nee:
+    with col_nee:
         if st.button("❌ ANNULEER", key="cancel_del_btn", use_container_width=True):
             st.session_state.ask_del = False
             st.rerun()
+
 elif aantal_geselecteerd > 0:
-    c_sel, c_loc, c_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
-    with c_sel:
+    col_sel, col_loc, col_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
+
+    with col_sel:
         st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
-        if st.button("❌ Wissen", key="deselect_btn", use_container_width=True):
+        if st.button("❌ Selectie wissen", key="deselect_btn", use_container_width=True):
             st.session_state.mijn_data["Selecteer"] = False
             st.rerun()
-    with c_loc:
-        c_i, c_b = st.columns([2, 1], gap="small", vertical_alignment="bottom")
-        with c_i: n_loc = st.text_input("Nieuwe Locatie", placeholder="Naar...")
-        with c_b:
-            if st.button("📍 Wijzig", key="bulk_update_btn", use_container_width=True):
-                if n_loc:
-                    st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(echt_geselecteerd["ID"]), "Locatie"] = n_loc
-                    st.session_state.mijn_data["Selecteer"] = False
+
+    with col_loc:
+        c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
+        with c_inp:
+            nieuwe_locatie = st.text_input("Nieuwe Locatie", placeholder="Naar locatie...", label_visibility="visible")
+        with c_btn:
+            if st.button("📍 Wijzig locatie", key="bulk_update_btn", use_container_width=True):
+                if nieuwe_locatie:
+                    ids_te_wijzigen = geselecteerd_df["ID"].tolist()
+                    masker = st.session_state.mijn_data["ID"].isin(ids_te_wijzigen)
+                    st.session_state.mijn_data.loc[masker, "Locatie"] = nieuwe_locatie
+                    st.session_state.mijn_data.loc[masker, "Selecteer"] = False
                     sla_data_op(st.session_state.mijn_data)
+                    st.session_state.success_msg = f"📍 {len(ids_te_wijzigen)} ruiten verplaatst naar '{nieuwe_locatie}'"
                     st.rerun()
-    with c_out:
-        if st.button("📦 Uit voorraad", key="header_del_btn", use_container_width=True):
+                else:
+                    st.toast("Vul eerst een locatie in", icon="⚠️")
+
+    with col_out:
+        st.write("") 
+        if st.button("📦 Uit voorraad melden", key="header_del_btn", use_container_width=True):
             st.session_state.ask_del = True
             st.rerun()
+
 else:
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
-    with c_in: zoek = st.text_input("Zoeken", placeholder="Zoek...", value=st.session_state.zoek_input)
-    with c_zo: 
-        if st.button("🔍", key="search_btn"):
-            st.session_state.zoek_input = zoek
-            st.rerun()
+    
+    with c_in:
+        zoekterm = st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", label_visibility="visible", key="zoek_input")
+    with c_zo:
+        st.button("🔍", key="search_btn", use_container_width=True)
     with c_wi:
-        if st.button("❌", key="clear_btn"):
-            st.session_state.zoek_input = ""
-            st.session_state.mijn_data["Selecteer"] = False
-            st.rerun()
+        st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
     with c_all:
-        if st.button("✅ Alles Selecteren", key="select_all_btn"):
-            st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(view_df["ID"]), "Selecteer"] = True
+        if st.button("✅ Alles Selecteren", key="select_all_btn", use_container_width=True):
+            temp_view = df.copy()
+            if zoekterm:
+                mask = temp_view.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+                temp_view = temp_view[mask]
+            
+            visible_ids = temp_view["ID"].tolist()
+            st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(visible_ids), "Selecteer"] = True
             st.rerun()
+
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- TABEL ---
+# --- TABEL WEERGAVE ---
+view_df = df.copy()
+
+# Optie om 'Uit Voorraad' ruiten te verbergen of te tonen
+show_all = st.checkbox("Toon ook items 'Uit Voorraad'", value=False)
+if not show_all:
+    view_df = view_df[view_df["Status"] != "Uit Voorraad"]
+
+if aantal_geselecteerd > 0:
+    st.caption("Weergave opties:")
+    filter_mode = st.radio("Toon:", ["Huidige Lijst", f"Alleen Selectie ({aantal_geselecteerd})"], 
+                           horizontal=True, label_visibility="collapsed")
+    if "Alleen Selectie" in filter_mode:
+        view_df = view_df[view_df["Selecteer"] == True]
+
+if st.session_state.get("zoek_input"):
+    zoekterm = st.session_state.get("zoek_input")
+    mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+    view_df = view_df[mask]
+
+# --- KLEUR STYLING ---
+# We gebruiken pandas styling om rijen met status "Uit Voorraad" rood/grijs te kleuren
+def style_row(row):
+    if row.Status == "Uit Voorraad":
+        return ['background-color: #ffe5e5; color: #a0a0a0; font-style: italic'] * len(row)
+    return [''] * len(row)
+
+styled_view = view_df.style.apply(style_row, axis=1)
+
 edited_df = st.data_editor(
-    view_df,
+    styled_view,
     column_config={
-        "Selecteer": st.column_config.CheckboxColumn("✅", width="small"),
+        "Selecteer": st.column_config.CheckboxColumn("✅", default=False, width="small"),
+        "Status": st.column_config.SelectboxColumn("Status", options=["In Voorraad", "Uit Voorraad"], width="small"),
+        "Locatie": st.column_config.TextColumn("Locatie", width="small"),
+        "Aantal": st.column_config.TextColumn("Aant.", width="small"),
+        "Breedte": st.column_config.TextColumn("Br.", width="small"),
+        "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
+        "Spouw": st.column_config.TextColumn("Sp.", width="small"),
+        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
+        "Order": st.column_config.TextColumn("Order", width="medium"),
         "ID": None
     },
-    disabled=DATAKOLOMMEN,
+    disabled=["ID"],
     hide_index=True,
     use_container_width=True,
     height=700,
     key="editor"
 )
 
-# --- SYNC (Op ID basis om fouten te voorkomen) ---
+# --- ANTI-FLASH SYNC ---
 if not edited_df.equals(view_df):
-    changes = dict(zip(edited_df["ID"], edited_df["Selecteer"]))
-    for r_id, val in changes.items():
-        st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"] == r_id, "Selecteer"] = val
+    st.session_state.mijn_data.update(edited_df)
+    sla_data_op(st.session_state.mijn_data)
     st.rerun()
