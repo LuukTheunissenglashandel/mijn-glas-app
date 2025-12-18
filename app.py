@@ -3,31 +3,41 @@ import pandas as pd
 import uuid
 from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURATIE ---
+# --- 1. CONFIGURATIE & LOCATIES ---
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
-# Locatie opties voor dropdown
+# De door jou opgegeven lijst met locaties
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- CSS: TABLET & TOUCH OPTIMALISATIE ---
+# --- 2. CSS: TABLET, TOUCH & KEYBOARD ONDERDRUKKING ---
 st.markdown("""
     <style>
+    /* Algemene layout */
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
+    /* Knoppen groter voor duimen op tablet */
     div.stButton > button { 
         border-radius: 8px; height: 50px; font-weight: 600; border: none; 
     }
     
+    /* Hogere rijen voor makkelijk tikken */
     [data-testid="stDataEditor"] div {
         line-height: 1.8 !important;
     }
 
+    /* Grote checkbox voor 'Uit voorraad' */
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
+
+    /* --- KEYBOARD ONDERDRUKKING HACK --- */
+    /* Vertelt de browser: open geen virtueel toetsenbord voor invoervelden in de editor */
+    [data-testid="stDataEditor"] input {
+        inputmode: none !important;
+    }
 
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
@@ -36,7 +46,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNCTIES ---
+# --- 3. DATA FUNCTIES ---
 def get_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
@@ -86,7 +96,7 @@ def sla_data_op(df):
 def clear_search():
     st.session_state.zoek_input = ""
 
-# --- AUTH ---
+# --- 4. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if not st.session_state.ingelogd:
     col1, col2, col3 = st.columns([1,2,1])
@@ -100,13 +110,13 @@ if not st.session_state.ingelogd:
             else: st.error("Fout wachtwoord")
     st.stop()
 
-# --- DATA INITIALISATIE ---
+# --- 5. DATA INITIALISATIE ---
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR ---
+# --- 6. SIDEBAR: IMPORT ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
@@ -126,7 +136,7 @@ with st.sidebar:
             st.rerun()
         except Exception as e: st.error(f"Fout: {e}")
 
-# --- KPI's ---
+# --- 7. DASHBOARD (KPI'S) ---
 active_df = df[df["Uit voorraad"] == "Nee"]
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
@@ -137,7 +147,7 @@ with c3:
     orders = active_df[active_df["Order"] != ""]["Order"].apply(lambda x: str(x).split('-')[0].strip())
     st.metric("Unieke Orders", orders.nunique())
 
-# --- ZOEKBALK ---
+# --- 8. ZOEKFUNCTIE ---
 c_in, c_zo, c_wi = st.columns([7, 1, 1], gap="small", vertical_alignment="bottom")
 with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed", key="zoek_input")
 with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
@@ -145,62 +155,9 @@ with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_containe
 
 st.write("") 
 
-# --- TABEL ---
+# --- 9. TABEL & EDITOR ---
 view_df = df.copy()
 
-# Filter zoekterm
+# Filteren op zoekterm
 if st.session_state.get("zoek_input"):
-    mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
-    view_df = view_df[mask]
-
-# Hulpmiddel voor checkbox status
-view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
-
-# Herschik de kolommen voor de gewenste weergave (Order -> Uit voorraad_bool)
-kolom_volgorde = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad_bool", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
-view_df = view_df[kolom_volgorde]
-
-def highlight_stock(s):
-    return ['background-color: #ff4b4b; color: white' if s["Uit voorraad_bool"] else '' for _ in s]
-
-styled_view = view_df.style.apply(highlight_stock, axis=1)
-
-# DATA EDITOR
-edited_df = st.data_editor(
-    styled_view,
-    column_config={
-        "Locatie": st.column_config.SelectboxColumn(
-            "📍 Loc", 
-            width="small", # Nu smaller gemaakt
-            options=LOCATIE_OPTIES,
-            required=True
-        ),
-        "Aantal": st.column_config.TextColumn("Aant.", width="small"),
-        "Breedte": st.column_config.TextColumn("Br.", width="small"),
-        "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
-        "Order": st.column_config.TextColumn("Order", width="medium"),
-        "Uit voorraad_bool": st.column_config.CheckboxColumn("✅ Uit voorraad", width="small"),
-        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
-        "Spouw": st.column_config.TextColumn("Sp.", width="small"),
-        "ID": None,
-        "Uit voorraad": None 
-    },
-    disabled=["Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"],
-    hide_index=True,
-    use_container_width=True,
-    height=700,
-    key="editor"
-)
-
-# VERWERKING EN OPSLAG
-if not edited_df.equals(view_df):
-    # Synchroniseer checkbox status naar Ja/Nee tekst voor de database
-    edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
-    
-    # Update de hoofd-dataset (gebaseerd op ID)
-    st.session_state.mijn_data.update(edited_df[["ID", "Locatie", "Uit voorraad"]])
-    
-    # Sla op naar Cloud
-    sla_data_op(st.session_state.mijn_data)
-    st.success("Wijziging opgeslagen!")
-    st.rerun()
+    mask = view_df.astype(str).apply(lambda x:
