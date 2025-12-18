@@ -19,24 +19,18 @@ st.markdown("""
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
     div.stButton > button { 
-        border-radius: 8px; 
-        height: 45px; 
-        font-weight: 600; 
-        border: none; 
-        transition: all 0.2s ease-in-out;
+        border-radius: 8px; height: 45px; font-weight: 600; border: none; 
     }
     
-    div.stButton > button[key="search_btn"] { 
-        background-color: #0d6efd; color: white; 
-    }
-
-    div.stButton > button[key="clear_btn"] { 
-        background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; 
-    }
+    div.stButton > button[key="search_btn"] { background-color: #0d6efd; color: white; }
+    div.stButton > button[key="clear_btn"] { background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; }
 
     div[data-testid="stMetric"] {
         background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px;
     }
+
+    /* Checkbox groter voor makkelijker klikken */
+    input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
@@ -52,8 +46,7 @@ def get_connection():
 def clean_int(val):
     try:
         if val is None or str(val).strip() == "": return ""
-        s_val = str(val).replace(',', '.').strip()
-        return str(int(float(s_val)))
+        return str(int(float(str(val).replace(',', '.'))))
     except:
         return str(val)
 
@@ -69,16 +62,15 @@ def laad_data_van_cloud():
     if "ID" not in df.columns:
         df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
     
-    # Zorg dat alle kolommen bestaan
     for col in DATAKOLOMMEN:
         if col not in df.columns: 
             df[col] = "Nee" if col == "Uit voorraad" else ""
 
-    # Normaliseer de "Uit voorraad" waarden naar Ja/Nee tekst
+    # Forceer "Uit voorraad" naar Ja/Nee tekst voor stabiliteit
     if "Uit voorraad" in df.columns:
-        df["Uit voorraad"] = df["Uit voorraad"].astype(str).str.strip()
-        # Converteer oude True/False of lege velden naar Nee/Ja
-        df["Uit voorraad"] = df["Uit voorraad"].apply(lambda x: "Ja" if x in ["True", "Ja", "1", "YES"] else "Nee")
+        df["Uit voorraad"] = df["Uit voorraad"].astype(str).apply(
+            lambda x: "Ja" if x.lower() in ["true", "ja", "1", "yes"] else "Nee"
+        )
 
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
         if col in df.columns: df[col] = df[col].apply(clean_int)
@@ -88,6 +80,7 @@ def laad_data_van_cloud():
 def sla_data_op(df):
     if df.empty: return
     conn = get_connection()
+    # Maak een kopie en zorg dat alles platte tekst is voor de cloud
     save_df = df.copy().astype(str)
     try:
         conn.update(worksheet="Blad1", data=save_df)
@@ -98,7 +91,7 @@ def sla_data_op(df):
 def clear_search():
     st.session_state.zoek_input = ""
 
-# --- AUTHENTICATIE ---
+# --- AUTH ---
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if not st.session_state.ingelogd:
     col1, col2, col3 = st.columns([1,2,1])
@@ -109,8 +102,7 @@ if not st.session_state.ingelogd:
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
                 st.rerun()
-            else:
-                st.error("Fout wachtwoord")
+            else: st.error("Fout wachtwoord")
     st.stop()
 
 # --- DATA INITIALISATIE ---
@@ -123,28 +115,24 @@ df = st.session_state.mijn_data
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
-    if uploaded_file:
-        if st.button("📤 Toevoegen aan voorraad", key="upload_btn"):
-            try:
-                nieuwe_data = pd.read_excel(uploaded_file)
-                nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
-                mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
-                nieuwe_data = nieuwe_data.rename(columns=mapping)
-                nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
-                nieuwe_data["Uit voorraad"] = "Nee"
-                for col in DATAKOLOMMEN:
-                    if col not in nieuwe_data.columns: nieuwe_data[col] = ""
-                final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
-                st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
-                sla_data_op(st.session_state.mijn_data)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Fout: {e}")
+    if uploaded_file and st.button("📤 Toevoegen", key="upload_btn"):
+        try:
+            nieuwe_data = pd.read_excel(uploaded_file)
+            nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
+            mapping = {"Pos": "Pos.", "Breedte": "Breedte", "Hoogte": "Hoogte", "Aantal": "Aantal", "Omschrijving": "Omschrijving", "Spouw": "Spouw", "Order": "Order"}
+            nieuwe_data = nieuwe_data.rename(columns=mapping)
+            nieuwe_data["ID"] = [str(uuid.uuid4()) for _ in range(len(nieuwe_data))]
+            nieuwe_data["Uit voorraad"] = "Nee"
+            for col in DATAKOLOMMEN:
+                if col not in nieuwe_data.columns: nieuwe_data[col] = ""
+            final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
+            st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
+            sla_data_op(st.session_state.mijn_data)
+            st.rerun()
+        except Exception as e: st.error(f"Fout: {e}")
 
 # --- KPI's ---
-# Alleen tellen wat "Nee" is bij uit voorraad
 active_df = df[df["Uit voorraad"] == "Nee"]
-
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
@@ -156,8 +144,7 @@ with c3:
 
 # --- ZOEKBALK ---
 c_in, c_zo, c_wi = st.columns([7, 1, 1], gap="small", vertical_alignment="bottom")
-with c_in: 
-    zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, afmeting of locatie...", label_visibility="collapsed", key="zoek_input")
+with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek...", label_visibility="collapsed", key="zoek_input")
 with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
 with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
@@ -169,9 +156,11 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Kleurfunctie: nu gebaseerd op de tekst "Ja"
+# BELANGRIJK: Omzetten naar echte booleans ALLEEN voor het tonen van de checkbox
+view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
+
 def highlight_stock(s):
-    return ['background-color: #ff4b4b; color: white' if s["Uit voorraad"] == "Ja" else '' for _ in s]
+    return ['background-color: #ff4b4b; color: white' if s["Uit voorraad_bool"] else '' for _ in s]
 
 styled_view = view_df.style.apply(highlight_stock, axis=1)
 
@@ -183,25 +172,28 @@ edited_df = st.data_editor(
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
-        # DROPDOWN OPTIE: Dit is veel stabieler dan een checkbox
-        "Uit voorraad": st.column_config.SelectboxColumn(
-            "Uit voorraad\nmelden", 
-            options=["Nee", "Ja"],
-            width="small",
-            required=True
-        ),
+        # Hier is het vinkje terug voor 1-klik actie
+        "Uit voorraad_bool": st.column_config.CheckboxColumn("Uit voorraad\nmelden", width="small", default=False),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
-        "ID": None 
+        "ID": None,
+        "Uit voorraad": None # Verberg de tekst kolom
     },
-    disabled=["ID"],
+    disabled=["ID", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"], # Alleen checkbox klikbaar maken voor snelheid
     hide_index=True,
     use_container_width=True,
     height=700,
     key="editor"
 )
 
+# VERWERKING VAN DE KLIK
 if not edited_df.equals(view_df):
-    st.session_state.mijn_data.update(edited_df)
+    # Vertaal de checkbox-klik direct terug naar Ja/Nee tekst
+    edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
+    
+    # Update de hoofd-dataset
+    st.session_state.mijn_data.update(edited_df[["ID", "Uit voorraad"]])
+    
+    # Sla op naar Google Sheets
     sla_data_op(st.session_state.mijn_data)
     st.rerun()
