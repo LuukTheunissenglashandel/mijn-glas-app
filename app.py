@@ -66,6 +66,7 @@ def laad_data_van_cloud():
         if col not in df.columns: 
             df[col] = "Nee" if col == "Uit voorraad" else ""
 
+    # Forceer "Uit voorraad" naar Ja/Nee tekst voor stabiliteit
     if "Uit voorraad" in df.columns:
         df["Uit voorraad"] = df["Uit voorraad"].astype(str).apply(
             lambda x: "Ja" if x.lower() in ["true", "ja", "1", "yes"] else "Nee"
@@ -79,6 +80,7 @@ def laad_data_van_cloud():
 def sla_data_op(df):
     if df.empty: return
     conn = get_connection()
+    # Maak een kopie en zorg dat alles platte tekst is voor de cloud
     save_df = df.copy().astype(str)
     try:
         conn.update(worksheet="Blad1", data=save_df)
@@ -142,7 +144,7 @@ with c3:
 
 # --- ZOEKBALK ---
 c_in, c_zo, c_wi = st.columns([7, 1, 1], gap="small", vertical_alignment="bottom")
-with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, afmeting of omschrijving...", label_visibility="collapsed", key="zoek_input")
+with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek...", label_visibility="collapsed", key="zoek_input")
 with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
 with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
@@ -154,7 +156,7 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Hulpmiddel voor checkbox tonen
+# BELANGRIJK: Omzetten naar echte booleans ALLEEN voor het tonen van de checkbox
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
 def highlight_stock(s):
@@ -170,29 +172,28 @@ edited_df = st.data_editor(
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
+        # Hier is het vinkje terug voor 1-klik actie
         "Uit voorraad_bool": st.column_config.CheckboxColumn("Uit voorraad\nmelden", width="small", default=False),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
         "ID": None,
-        "Uit voorraad": None 
+        "Uit voorraad": None # Verberg de tekst kolom
     },
-    # Locatie is verwijderd uit disabled, dus nu aanpasbaar
-    disabled=["ID", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"], 
+    disabled=["ID", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"], # Alleen checkbox klikbaar maken voor snelheid
     hide_index=True,
     use_container_width=True,
     height=700,
     key="editor"
 )
 
-# VERWERKING VAN WIJZIGINGEN (Opslaan naar Cloud)
+# VERWERKING VAN DE KLIK
 if not edited_df.equals(view_df):
-    # Update de checkbox status naar tekst
+    # Vertaal de checkbox-klik direct terug naar Ja/Nee tekst
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
     
-    # Update de hoofd-dataset met de nieuwe Locatie en Voorraad status
-    for idx, row in edited_df.iterrows():
-        st.session_state.mijn_data.loc[st.session_state.mijn_data['ID'] == row['ID'], ["Uit voorraad", "Locatie"]] = [row["Uit voorraad"], row["Locatie"]]
+    # Update de hoofd-dataset
+    st.session_state.mijn_data.update(edited_df[["ID", "Uit voorraad"]])
     
-    # Direct opslaan in Google Sheets
+    # Sla op naar Google Sheets
     sla_data_op(st.session_state.mijn_data)
     st.rerun()
