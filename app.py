@@ -5,13 +5,14 @@ import time
 from streamlit_gsheets import GSheetsConnection
 
 # ==========================================
-# 1. INSTELLINGEN
+# 1. INSTELLINGEN & INITIALISATIE
 # ==========================================
 st.set_page_config(layout="wide", page_title="Glas Voorraad")
+
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-# Initialisatie (voorkom crashes)
+# Initieer session state variabelen om crashes te voorkomen
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if "mijn_data" not in st.session_state: st.session_state.mijn_data = pd.DataFrame(columns=["ID", "Selecteer"] + DATAKOLOMMEN)
 if "zoek_input" not in st.session_state: st.session_state.zoek_input = ""
@@ -34,11 +35,13 @@ def laad_data():
     conn = get_connection()
     try:
         df = conn.read(worksheet="Blad1", ttl=0)
-        if df is None or df.empty: return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
+        if df is None or df.empty: 
+             return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
     except:
         return pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
 
     if "ID" not in df.columns: df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
+    
     for col in DATAKOLOMMEN:
         if col not in df.columns: df[col] = ""
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
@@ -51,7 +54,9 @@ def laad_data():
 def sla_data_op(df):
     conn = get_connection()
     save_df = df.copy()
-    if "Selecteer" in save_df.columns: save_df = save_df.drop(columns=["Selecteer"])
+    if "Selecteer" in save_df.columns: 
+        save_df = save_df.drop(columns=["Selecteer"])
+    
     try:
         conn.update(worksheet="Blad1", data=save_df)
         st.cache_data.clear()
@@ -62,6 +67,36 @@ def reset_selecties():
     """Zet alle vinkjes uit."""
     if not st.session_state.mijn_data.empty:
         st.session_state.mijn_data["Selecteer"] = False
+
+# --- CRUCIALE CALLBACK FUNCTIE ---
+# Dit wordt uitgevoerd ZODRA je op de verwijder knop drukt, maar VOORDAT het scherm herlaadt.
+# Hierdoor crasht de app niet bij het leegmaken van de zoekbalk.
+def verwijder_actie():
+    df = st.session_state.mijn_data
+    zoekterm = st.session_state.zoek_input
+    
+    # 1. Bepaal wat er ZICHTBAAR is (het filter nabootsen)
+    if zoekterm:
+        mask = df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+        zichtbare_df = df[mask]
+    else:
+        zichtbare_df = df
+        
+    # 2. Bepaal wat er GESELECTEERD is binnen de zichtbare data
+    # Dit is de beveiliging: we kijken alleen naar IDs die zichtbaar EN aangevinkt zijn.
+    te_verwijderen_ids = zichtbare_df[zichtbare_df["Selecteer"] == True]["ID"].tolist()
+    
+    if te_verwijderen_ids:
+        # 3. Verwijder uit de hoofddataset
+        st.session_state.mijn_data = df[~df["ID"].isin(te_verwijderen_ids)]
+        
+        # 4. Opslaan
+        sla_data_op(st.session_state.mijn_data)
+        
+        # 5. Resetten (Dit mag hier wel!)
+        st.session_state.zoek_input = "" 
+        st.session_state.mijn_data["Selecteer"] = False
+        st.toast(f"✅ {len(te_verwijderen_ids)} regels verwijderd!")
 
 # ==========================================
 # 3. LOGIN
@@ -79,13 +114,14 @@ if not st.session_state.ingelogd:
                         st.session_state.mijn_data = laad_data()
                     st.rerun()
                 else:
-                    st.error("Fout")
+                    st.error("Fout wachtwoord")
     st.stop()
 
 # ==========================================
 # 4. HOOFDSCHERM
 # ==========================================
-# Data check
+
+# Veiligheidscheck data
 if "ID" not in st.session_state.mijn_data.columns:
     st.session_state.mijn_data = laad_data()
 
@@ -117,46 +153,32 @@ with st.sidebar:
         except Exception as e: st.error(f"Fout: {e}")
     
     st.markdown("---")
-    if st.button("Reset Vinkjes & Reload"):
-        reset_selecties()
+    if st.button("Reset & Reload"):
+        st.session_state.mijn_data = laad_data()
         st.rerun()
 
-# --- ZOEKEN ---
+# --- ZOEKEN & HEADER ---
 st.title("🏭 Glas Voorraad")
-# on_change=reset_selecties zorgt dat vinkjes weggaan als je typt
+
+# on_change=reset_selecties: Zorgt dat vinkjes verdwijnen als je typt (anti-spook-vinkjes)
 zoekterm = st.text_input("Zoeken", placeholder="Typ order, maat...", key="zoek_input", on_change=reset_selecties)
 
-# --- FILTER LOGICA ---
-# 1. Maak eerst de gefilterde view
+# --- FILTER LOGICA (Voor weergave en telling) ---
 view_df = df.copy()
 if zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# 2. CRUCIAAL: Tel ALLEEN vinkjes die in de view_df (zichtbare lijst) staan!
-#    De oude code telde 'df' (alles), deze code telt 'view_df' (wat je ziet).
+# Tel zichtbare selecties
 zichtbare_selectie = view_df[view_df["Selecteer"] == True]
 aantal_geselecteerd = len(zichtbare_selectie)
 
 # --- KNOPPEN ---
 if aantal_geselecteerd > 0:
-    st.info(f"**{aantal_geselecteerd}** regels geselecteerd in deze zoekopdracht.")
+    st.info(f"**{aantal_geselecteerd}** regels geselecteerd om te verwijderen.")
     
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button(f"🗑️ Verwijder {aantal_geselecteerd}", type="primary"):
-            # A. Pak alleen de IDs van de ZICHTBARE selectie
-            ids_weg = zichtbare_selectie["ID"].tolist()
-            
-            # B. Verwijder die uit de grote database
-            st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
-            
-            # C. Opslaan & Reset
-            sla_data_op(st.session_state.mijn_data)
-            st.session_state.zoek_input = ""
-            st.success("Verwijderd!")
-            time.sleep(1)
-            st.rerun()
+    # We gebruiken on_click=verwijder_actie. Dit lost de "StreamlitAPIException" op.
+    st.button(f"🗑️ Verwijder {aantal_geselecteerd} regels", type="primary", on_click=verwijder_actie)
 
 # --- EDITOR ---
 edited_df = st.data_editor(
@@ -172,9 +194,8 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- SYNC ---
+# --- SYNC VINKJES ---
 if not edited_df.equals(view_df):
-    # Update de vinkjes in de hoofddatabase
     wijzigingen = dict(zip(edited_df["ID"], edited_df["Selecteer"]))
     st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["ID"].map(wijzigingen).fillna(st.session_state.mijn_data["Selecteer"]).astype(bool)
     st.rerun()
