@@ -4,19 +4,23 @@ import uuid
 import time
 from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURATIE ---
+# --- 1. CONFIGURATIE & PAGE CONFIG (MOET ALS EERSTE) ---
+st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
+
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order"]
 
-st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
-
-# --- INITIALISATIE ---
+# --- 2. INITIALISATIE SESSION STATE (FIX VOOR DE ERROR BIJ INLOGGEN) ---
+# We zorgen dat deze variabelen ALTIJD bestaan, direct bij het opstarten.
 if "zoek_input" not in st.session_state:
     st.session_state.zoek_input = ""
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = False
+if "mijn_data" not in st.session_state:
+    # Nog geen data geladen? Zet een placeholder neer zodat de app niet crasht
+    st.session_state.mijn_data = pd.DataFrame(columns=["ID", "Selecteer"] + DATAKOLOMMEN)
 
-# --- CSS: DESIGN ---
+# --- 3. CSS: DESIGN ---
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
@@ -49,7 +53,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNCTIES ---
+# --- 4. FUNCTIES ---
 def get_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
@@ -74,9 +78,18 @@ def laad_data_van_cloud():
         if col not in df.columns: df[col] = ""
     for col in ["Aantal", "Spouw", "Breedte", "Hoogte"]:
         if col in df.columns: df[col] = df[col].apply(clean_int)
-    return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
+    
+    # Zorg dat Selecteer kolom bestaat
+    result = df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
+    if "Selecteer" not in result.columns:
+        result.insert(0, "Selecteer", False)
+    else:
+        result["Selecteer"] = result["Selecteer"].astype(bool)
+        
+    return result
 
 def sla_data_op(df):
+    # Geen blokkade meer voor lege sheets, zoals gevraagd.
     conn = get_connection()
     save_df = df.copy()
     if "Selecteer" in save_df.columns: save_df = save_df.drop(columns=["Selecteer"])
@@ -91,18 +104,12 @@ def bereken_unieke_orders(df):
         return df[df["Order"] != ""]["Order"].apply(lambda x: x.split('-')[0].strip()).nunique()
     except: return 0
 
-# --- VEILIGHEIDS FUNCTIE: RESET ---
-def reset_selectie():
-    # Deze functie wordt aangeroepen zodra je zoekt.
-    # Hij wist ALLE vinkjes in de hele database.
-    if 'mijn_data' in st.session_state:
-        st.session_state.mijn_data["Selecteer"] = False
-
 def clear_search():
     st.session_state.zoek_input = ""
-    reset_selectie()
+    # Optioneel: reset ook de selectie als je de zoekterm wist
+    # st.session_state.mijn_data["Selecteer"] = False 
 
-# --- AUTH ---
+# --- 5. AUTHENTICATIE ---
 if not st.session_state.ingelogd:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
@@ -113,19 +120,20 @@ if not st.session_state.ingelogd:
             if submit:
                 if ww == WACHTWOORD:
                     st.session_state.ingelogd = True
+                    # Eerste keer data laden bij inloggen
+                    st.session_state.mijn_data = laad_data_van_cloud()
                     st.rerun()
                 else:
                     st.error("Fout wachtwoord")
     st.stop()
 
-# --- DATA LOAD ---
-if 'mijn_data' not in st.session_state:
-    st.session_state.mijn_data = laad_data_van_cloud()
-    st.session_state.mijn_data.insert(0, "Selecteer", False)
+# --- 6. DATA CHECK (Als we ingelogd zijn maar data is leeg/verouderd) ---
+if st.session_state.mijn_data.empty and "ID" not in st.session_state.mijn_data.columns:
+     st.session_state.mijn_data = laad_data_van_cloud()
 
 df = st.session_state.mijn_data
 
-# --- SIDEBAR ---
+# --- 7. SIDEBAR ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
@@ -153,10 +161,10 @@ with st.sidebar:
             except Exception as e: st.error(f"Fout: {e}")
     st.markdown("---")
     if st.button("🔄 Data Herladen"):
-        del st.session_state.mijn_data
+        st.session_state.mijn_data = laad_data_van_cloud()
         st.rerun()
 
-# --- HEADER ---
+# --- 8. HEADER ---
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
@@ -169,21 +177,15 @@ if 'success_msg' in st.session_state and st.session_state.success_msg:
     st.success(st.session_state.success_msg)
     st.session_state.success_msg = "" 
 
-# --- FILTER LOGICA & STATUS ---
-# We bepalen EERST de view, voordat we tellen hoeveel er geselecteerd zijn.
-view_df = df.copy()
-actieve_zoekterm = st.session_state.get("zoek_input", "")
+# --- 9. STATUS & SELECTIE TELLEN ---
+# We tellen hoeveel vinkjes er AAN staan in de HELE database
+try:
+    geselecteerd_df = df[df["Selecteer"] == True]
+    aantal_geselecteerd = len(geselecteerd_df)
+except:
+    aantal_geselecteerd = 0
 
-if actieve_zoekterm:
-    mask = view_df.astype(str).apply(lambda x: x.str.contains(actieve_zoekterm, case=False)).any(axis=1)
-    view_df = view_df[mask]
-
-# Nu tellen we alleen de selecties die OOK in de huidige view (zoekresultaat) zitten
-# Dit voorkomt dat je per ongeluk 'verborgen' vinkjes meetelt
-geselecteerd_in_view = view_df[view_df["Selecteer"] == True]
-aantal_geselecteerd = len(geselecteerd_in_view)
-
-# --- ACTIEBALK ---
+# --- 10. ACTIEBALK ---
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
@@ -193,19 +195,21 @@ if st.session_state.get('ask_del'):
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
         if st.button("✅ JA, Melden", key="real_del_btn", use_container_width=True):
-            # VEILIGHEID: Verwijder ALLEEN de ID's die in de huidige view zichtbaar en geselecteerd zijn
-            ids_weg = geselecteerd_in_view["ID"].tolist()
+            # 1. Haal ID's op van ALLES wat aangevinkt staat
+            ids_weg = df[df["Selecteer"] == True]["ID"].tolist()
             
-            if len(ids_weg) > 0:
-                # Verwijder ze uit de database
-                st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
-                sla_data_op(st.session_state.mijn_data)
-                st.session_state.success_msg = f"✅ {len(ids_weg)} regels verwijderd!"
+            # 2. Verwijder deze ID's uit de hoofddataset
+            # ~ betekent: behoud alles wat NIET in de lijst 'ids_weg' staat
+            st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
             
-            # Reset
+            # 3. Opslaan
+            sla_data_op(st.session_state.mijn_data)
+            
+            # 4. Reset UI
             st.session_state.ask_del = False
-            st.session_state.mijn_data["Selecteer"] = False
-            st.session_state.zoek_input = "" 
+            st.session_state.zoek_input = "" # Zoekbalk leegmaken zodat je resultaat ziet
+            
+            st.session_state.success_msg = f"✅ {len(ids_weg)} regels verwijderd!"
             st.rerun()
 
     with col_nee:
@@ -228,7 +232,7 @@ elif aantal_geselecteerd > 0:
         with c_btn:
             if st.button("📍 Wijzig", key="bulk_update_btn", use_container_width=True):
                 if nieuwe_loc:
-                    ids = geselecteerd_in_view["ID"].tolist()
+                    ids = geselecteerd_df["ID"].tolist()
                     mask = st.session_state.mijn_data["ID"].isin(ids)
                     st.session_state.mijn_data.loc[mask, "Locatie"] = nieuwe_loc
                     st.session_state.mijn_data.loc[mask, "Selecteer"] = False
@@ -246,26 +250,31 @@ else:
     # FASE 1: ZOEKEN
     c_in, c_zo, c_wi = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
     with c_in:
-        # on_change=reset_selectie: Zodra je typt, verdwijnen alle oude vinkjes!
-        st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input", on_change=reset_selectie)
+        # GEEN automatische reset meer hier, want dat veroorzaakte bugs.
+        # Gewoon een simpele input.
+        st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input")
     with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
     with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
-    # KNOP "ALLES SELECTEREN" IS VERWIJDERD OM FOUTEN TE VOORKOMEN
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- TABEL ---
-# We gebruiken de view_df die al gefilterd is bovenaan bij 'Filter Logica'
-# Als er selecties zijn, tonen we standaard alles (zodat je context houdt), 
-# tenzij je specifiek wilt filteren.
+# --- 11. TABEL & FILTEREN VOOR WEERGAVE ---
+view_df = df.copy()
+actieve_zoekterm = st.session_state.get("zoek_input", "")
 
+# Pas filter toe als er een zoekterm is
+if actieve_zoekterm:
+    mask = view_df.astype(str).apply(lambda x: x.str.contains(actieve_zoekterm, case=False)).any(axis=1)
+    view_df = view_df[mask]
+
+# Toon alleen selectie als optie gekozen is
 if aantal_geselecteerd > 0:
     st.caption("Weergave opties:")
-    # Filter optie voor gebruikersgemak
-    mode = st.radio("Toon:", ["Alles in zoekopdracht", f"Alleen Selectie ({aantal_geselecteerd})"], horizontal=True, label_visibility="collapsed")
+    mode = st.radio("Toon:", ["Alles (gefilterd)", f"Alleen Selectie ({aantal_geselecteerd})"], horizontal=True, label_visibility="collapsed")
     if "Alleen Selectie" in mode:
         view_df = view_df[view_df["Selecteer"] == True]
 
+# De Editor
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -286,6 +295,9 @@ edited_df = st.data_editor(
     key="editor"
 )
 
+# --- 12. SYNC LOGICA (CRUCIAAL) ---
+# Als je iets aanvinkt in de editor, updaten we direct de hoofddatabase
 if not edited_df.equals(view_df):
+    # We updaten de hoofd 'mijn_data' met de wijzigingen uit de editor (vinkjes)
     st.session_state.mijn_data.update(edited_df)
     st.rerun()
