@@ -31,13 +31,15 @@ st.markdown("""
 
     /* Knoppen */
     div.stButton > button { border-radius: 8px; height: 45px; font-weight: 600; border: none; }
-    div.stButton > button[key="search_btn"], div.stButton > button[key="select_all_btn"], div.stButton > button[key="bulk_update_btn"] { background-color: #0d6efd; color: white; }
+    div.stButton > button[key="search_btn"], div.stButton > button[key="bulk_update_btn"] { background-color: #0d6efd; color: white; }
     div.stButton > button[key="clear_btn"], div.stButton > button[key="deselect_btn"], div.stButton > button[key="cancel_del_btn"] { background-color: #f8f9fa; color: #495057; border: 1px solid #dee2e6; }
     div.stButton > button[key="header_del_btn"] { background-color: #dc3545; color: white; }
     div.stButton > button[key="real_del_btn"] { background-color: #198754; color: white; }
 
-    /* KPI Cards & Checkbox */
+    /* KPI Cards */
     div[data-testid="stMetric"] { background-color: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; }
+    
+    /* Checkbox vergroten */
     input[type=checkbox] { transform: scale(1.6); cursor: pointer; }
 
     @media only screen and (max-width: 1024px) {
@@ -75,7 +77,6 @@ def laad_data_van_cloud():
     return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
 
 def sla_data_op(df):
-    # BEVEILIGING VERWIJDERD: Lege sheets worden nu gewoon opgeslagen.
     conn = get_connection()
     save_df = df.copy()
     if "Selecteer" in save_df.columns: save_df = save_df.drop(columns=["Selecteer"])
@@ -90,9 +91,10 @@ def bereken_unieke_orders(df):
         return df[df["Order"] != ""]["Order"].apply(lambda x: x.split('-')[0].strip()).nunique()
     except: return 0
 
-# --- KRITIEKE FUNCTIE: VOORKOMT VERBORGEN SELECTIES ---
+# --- VEILIGHEIDS FUNCTIE: RESET ---
 def reset_selectie():
-    # Zodra je zoekt, worden alle vinkjes uitgezet.
+    # Deze functie wordt aangeroepen zodra je zoekt.
+    # Hij wist ALLE vinkjes in de hele database.
     if 'mijn_data' in st.session_state:
         st.session_state.mijn_data["Selecteer"] = False
 
@@ -167,38 +169,52 @@ if 'success_msg' in st.session_state and st.session_state.success_msg:
     st.success(st.session_state.success_msg)
     st.session_state.success_msg = "" 
 
-# --- STATUS BEPALEN ---
-try:
-    geselecteerd_df = df[df["Selecteer"] == True]
-    aantal_geselecteerd = len(geselecteerd_df)
-except:
-    aantal_geselecteerd = 0
+# --- FILTER LOGICA & STATUS ---
+# We bepalen EERST de view, voordat we tellen hoeveel er geselecteerd zijn.
+view_df = df.copy()
+actieve_zoekterm = st.session_state.get("zoek_input", "")
+
+if actieve_zoekterm:
+    mask = view_df.astype(str).apply(lambda x: x.str.contains(actieve_zoekterm, case=False)).any(axis=1)
+    view_df = view_df[mask]
+
+# Nu tellen we alleen de selecties die OOK in de huidige view (zoekresultaat) zitten
+# Dit voorkomt dat je per ongeluk 'verborgen' vinkjes meetelt
+geselecteerd_in_view = view_df[view_df["Selecteer"] == True]
+aantal_geselecteerd = len(geselecteerd_in_view)
 
 # --- ACTIEBALK ---
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
 if st.session_state.get('ask_del'):
+    # FASE 3: BEVESTIGING
     st.markdown(f"**⚠️ Weet je zeker dat je {aantal_geselecteerd} regels uit voorraad wilt melden?**")
+    
     col_ja, col_nee = st.columns([1, 1])
     with col_ja:
         if st.button("✅ JA, Melden", key="real_del_btn", use_container_width=True):
-            ids_weg = geselecteerd_df["ID"].tolist()
-            # Verwijderen
-            st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
-            # Opslaan
-            sla_data_op(st.session_state.mijn_data)
+            # VEILIGHEID: Verwijder ALLEEN de ID's die in de huidige view zichtbaar en geselecteerd zijn
+            ids_weg = geselecteerd_in_view["ID"].tolist()
+            
+            if len(ids_weg) > 0:
+                # Verwijder ze uit de database
+                st.session_state.mijn_data = df[~df["ID"].isin(ids_weg)]
+                sla_data_op(st.session_state.mijn_data)
+                st.session_state.success_msg = f"✅ {len(ids_weg)} regels verwijderd!"
+            
             # Reset
             st.session_state.ask_del = False
             st.session_state.mijn_data["Selecteer"] = False
             st.session_state.zoek_input = "" 
-            st.session_state.success_msg = f"✅ {len(ids_weg)} regels verwijderd!"
             st.rerun()
+
     with col_nee:
         if st.button("❌ ANNULEER", key="cancel_del_btn", use_container_width=True):
             st.session_state.ask_del = False
             st.rerun()
 
 elif aantal_geselecteerd > 0:
+    # FASE 2: ACTIEMODUS
     col_sel, col_loc, col_out = st.columns([1.5, 3, 1.5], gap="large", vertical_alignment="bottom")
     with col_sel:
         st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
@@ -212,7 +228,7 @@ elif aantal_geselecteerd > 0:
         with c_btn:
             if st.button("📍 Wijzig", key="bulk_update_btn", use_container_width=True):
                 if nieuwe_loc:
-                    ids = geselecteerd_df["ID"].tolist()
+                    ids = geselecteerd_in_view["ID"].tolist()
                     mask = st.session_state.mijn_data["ID"].isin(ids)
                     st.session_state.mijn_data.loc[mask, "Locatie"] = nieuwe_loc
                     st.session_state.mijn_data.loc[mask, "Selecteer"] = False
@@ -227,42 +243,28 @@ elif aantal_geselecteerd > 0:
             st.rerun()
 
 else:
-    c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
+    # FASE 1: ZOEKEN
+    c_in, c_zo, c_wi = st.columns([6, 1, 1], gap="small", vertical_alignment="bottom")
     with c_in:
-        # on_change=reset_selectie zorgt dat verborgen vinkjes verdwijnen bij typen
+        # on_change=reset_selectie: Zodra je typt, verdwijnen alle oude vinkjes!
         st.text_input("Zoeken", placeholder="🔍 Order, afmeting, locatie...", key="zoek_input", on_change=reset_selectie)
     with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
     with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
-    with c_all:
-        if st.button("✅ Alles Selecteren", key="select_all_btn", use_container_width=True):
-            view = df.copy()
-            zoek = st.session_state.get("zoek_input", "")
-            if zoek:
-                mask = view.astype(str).apply(lambda x: x.str.contains(zoek, case=False)).any(axis=1)
-                view = view[mask]
-            
-            ids = view["ID"].tolist()
-            st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(ids), "Selecteer"] = True
-            st.rerun()
+    # KNOP "ALLES SELECTEREN" IS VERWIJDERD OM FOUTEN TE VOORKOMEN
 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # --- TABEL ---
-view_df = df.copy()
-actieve_zoekterm = st.session_state.get("zoek_input", "")
+# We gebruiken de view_df die al gefilterd is bovenaan bij 'Filter Logica'
+# Als er selecties zijn, tonen we standaard alles (zodat je context houdt), 
+# tenzij je specifiek wilt filteren.
 
 if aantal_geselecteerd > 0:
     st.caption("Weergave opties:")
-    mode = st.radio("Toon:", ["Alles", f"Alleen Selectie ({aantal_geselecteerd})"], horizontal=True, label_visibility="collapsed")
+    # Filter optie voor gebruikersgemak
+    mode = st.radio("Toon:", ["Alles in zoekopdracht", f"Alleen Selectie ({aantal_geselecteerd})"], horizontal=True, label_visibility="collapsed")
     if "Alleen Selectie" in mode:
         view_df = view_df[view_df["Selecteer"] == True]
-    elif actieve_zoekterm:
-         mask = view_df.astype(str).apply(lambda x: x.str.contains(actieve_zoekterm, case=False)).any(axis=1)
-         view_df = view_df[mask]
-else:
-    if actieve_zoekterm:
-        mask = view_df.astype(str).apply(lambda x: x.str.contains(actieve_zoekterm, case=False)).any(axis=1)
-        view_df = view_df[mask]
 
 edited_df = st.data_editor(
     view_df,
