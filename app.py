@@ -6,7 +6,8 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
-DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Omschrijving", "Spouw", "Order", "Uit voorraad"]
+# Volgorde aangepast: Order nu vóór Omschrijving
+DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Spouw", "Order", "Omschrijving", "Uit voorraad"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
@@ -100,6 +101,11 @@ def sla_data_op(df):
     if "Selecteer" in save_df.columns:
         save_df = save_df.drop(columns=["Selecteer"])
     
+    # Zorg dat booleans als tekst worden opgeslagen voor GSheets consistentie
+    for col in ["Uit voorraad"]:
+        if col in save_df.columns:
+            save_df[col] = save_df[col].astype(str)
+
     try:
         conn.update(worksheet="Blad1", data=save_df)
         st.cache_data.clear()
@@ -137,6 +143,8 @@ if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
     st.session_state.mijn_data.insert(0, "Selecteer", False)
 
+# Synchroniseer types voor betrouwbare bulk-acties
+st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["Selecteer"].map({'True': True, 'False': False, True: True, False: False})
 df = st.session_state.mijn_data
 
 # --- SIDEBAR ---
@@ -177,18 +185,16 @@ c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
     try: 
-        mask_in = (df["Uit voorraad"] == "False") | (df["Uit voorraad"] == "")
+        mask_in = (df["Uit voorraad"].astype(str) == "False") | (df["Uit voorraad"].astype(str) == "")
         tot = df[mask_in]["Aantal"].replace('', '0').astype(int).sum()
     except: tot = 0
     st.metric("In Voorraad (stuks)", tot)
 with c3: st.metric("Unieke Orders", bereken_unieke_orders(df))
 
 # --- ACTIEBALK ---
-try:
-    geselecteerd_df = df[df["Selecteer"] == True]
-    aantal_geselecteerd = len(geselecteerd_df)
-except:
-    aantal_geselecteerd = 0
+# Verbeterde selectie check voor de bulk-update
+geselecteerd_ids = df[df["Selecteer"] == True]["ID"].tolist()
+aantal_geselecteerd = len(geselecteerd_ids)
 
 st.markdown('<div class="actie-container">', unsafe_allow_html=True)
 
@@ -203,15 +209,17 @@ if aantal_geselecteerd > 0:
     with col_loc:
         c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
         with c_inp:
-            nieuwe_locatie = st.text_input("Nieuwe Locatie", placeholder="Locatie...", label_visibility="collapsed")
+            nieuwe_locatie = st.text_input("Nieuwe Locatie", placeholder="Vul locatie in...", label_visibility="collapsed")
         with c_btn:
             if st.button("📍 Verplaats", key="bulk_update_btn", use_container_width=True):
                 if nieuwe_locatie:
-                    masker = st.session_state.mijn_data["ID"].isin(geselecteerd_df["ID"])
-                    st.session_state.mijn_data.loc[masker, "Locatie"] = nieuwe_locatie
-                    st.session_state.mijn_data.loc[masker, "Selecteer"] = False
+                    # Update direct in session state op basis van IDs
+                    st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(geselecteerd_ids), "Locatie"] = nieuwe_locatie
+                    st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(geselecteerd_ids), "Selecteer"] = False
                     sla_data_op(st.session_state.mijn_data)
                     st.rerun()
+                else:
+                    st.toast("Vul eerst een locatie in", icon="⚠️")
 else:
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     with c_in:
@@ -235,11 +243,10 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Data types voorbereiden
-view_df["Selecteer"] = view_df["Selecteer"].map({'True': True, 'False': False, True: True, False: False})
+# Data types voorbereiden voor editor weergave
 view_df["Uit voorraad"] = view_df["Uit voorraad"].map({'True': True, 'False': False, True: True, False: False})
 
-# Kleurfunctie: Maakt de cel rood als 'Uit voorraad' True is
+# Kleurfunctie
 def highlight_stock(s):
     return ['background-color: #ff4b4b; color: white' if s["Uit voorraad"] else '' for _ in s]
 
@@ -248,15 +255,15 @@ styled_view = view_df.style.apply(highlight_stock, axis=1)
 edited_df = st.data_editor(
     styled_view,
     column_config={
-        "Selecteer": st.column_config.CheckboxColumn("Selecteren", default=False, width="medium"),
+        "Selecteer": st.column_config.CheckboxColumn("Selecteren", default=False, width="small"),
         "Uit voorraad": st.column_config.CheckboxColumn("Uit voorraad", default=False, width="medium"),
         "Locatie": st.column_config.TextColumn("Locatie", width="small"),
         "Aantal": st.column_config.TextColumn("Aant.", width="small"),
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
-        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
+        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "ID": None
     },
     disabled=["ID"],
@@ -266,10 +273,9 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# Wijzigingen opslaan
+# Wijzigingen opslaan als er iets veranderd is in de editor
 if not edited_df.equals(view_df):
-    edited_df["Uit voorraad"] = edited_df["Uit voorraad"].astype(str)
-    edited_df["Selecteer"] = edited_df["Selecteer"].astype(str)
+    # Update de hoofd-dataset
     st.session_state.mijn_data.update(edited_df)
     sla_data_op(st.session_state.mijn_data)
     st.rerun()
