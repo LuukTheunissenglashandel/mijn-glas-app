@@ -7,7 +7,7 @@ from streamlit_gsheets import GSheetsConnection
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
-# Voeg hier de locaties toe die je in het dropdown-menu wilt zien
+# Locatie opties voor dropdown
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
@@ -19,17 +19,14 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Knoppen groter voor duimen */
     div.stButton > button { 
         border-radius: 8px; height: 50px; font-weight: 600; border: none; 
     }
     
-    /* Maak de rijen in de editor hoger voor touch-selectie */
     [data-testid="stDataEditor"] div {
         line-height: 1.8 !important;
     }
 
-    /* Checkbox visueel groter maken */
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
 
     @media only screen and (max-width: 1024px) {
@@ -150,12 +147,18 @@ st.write("")
 
 # --- TABEL ---
 view_df = df.copy()
+
+# Filter zoekterm
 if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Hulpmiddel voor checkbox
+# Hulpmiddel voor checkbox status
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
+
+# Herschik de kolommen voor de gewenste weergave (Order -> Uit voorraad_bool)
+kolom_volgorde = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad_bool", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
+view_df = view_df[kolom_volgorde]
 
 def highlight_stock(s):
     return ['background-color: #ff4b4b; color: white' if s["Uit voorraad_bool"] else '' for _ in s]
@@ -166,10 +169,9 @@ styled_view = view_df.style.apply(highlight_stock, axis=1)
 edited_df = st.data_editor(
     styled_view,
     column_config={
-        # LOCATIE ALS SELECTBOX (Tablet-vriendelijk)
         "Locatie": st.column_config.SelectboxColumn(
-            "📍 Locatie", 
-            width="medium",
+            "📍 Loc", 
+            width="small", # Nu smaller gemaakt
             options=LOCATIE_OPTIES,
             required=True
         ),
@@ -183,7 +185,6 @@ edited_df = st.data_editor(
         "ID": None,
         "Uit voorraad": None 
     },
-    # Alleen Locatie en de Checkbox zijn aanpasbaar
     disabled=["Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"],
     hide_index=True,
     use_container_width=True,
@@ -193,15 +194,13 @@ edited_df = st.data_editor(
 
 # VERWERKING EN OPSLAG
 if not edited_df.equals(view_df):
-    # Synchroniseer checkbox status naar Ja/Nee tekst
+    # Synchroniseer checkbox status naar Ja/Nee tekst voor de database
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
     
-    # Update de hoofd-dataset (ID is de sleutel, Locatie en Uit voorraad worden bijgewerkt)
+    # Update de hoofd-dataset (gebaseerd op ID)
     st.session_state.mijn_data.update(edited_df[["ID", "Locatie", "Uit voorraad"]])
     
-    # Sla alles op naar Google Sheets
+    # Sla op naar Cloud
     sla_data_op(st.session_state.mijn_data)
     st.success("Wijziging opgeslagen!")
     st.rerun()
-
-
