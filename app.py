@@ -6,6 +6,7 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATIE ---
 WACHTWOORD = "glas123"
+# Volgorde: Locatie, Aantal, Breedte, Hoogte, Order, Uit voorraad, Omschrijving, Spouw
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
@@ -98,9 +99,8 @@ def sla_data_op(df):
     if "Selecteer" in save_df.columns:
         save_df = save_df.drop(columns=["Selecteer"])
     
-    # Forceer tekst-opslag voor boolean kolommen
-    if "Uit voorraad" in save_df.columns:
-        save_df["Uit voorraad"] = save_df["Uit voorraad"].astype(str)
+    # Forceer alles naar string voor Google Sheets
+    save_df = save_df.astype(str)
 
     try:
         conn.update(worksheet="Blad1", data=save_df)
@@ -129,14 +129,7 @@ if not st.session_state.ingelogd:
 # --- DATA INITIALISATIE ---
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
-    st.session_state.mijn_data.insert(0, "Selecteer", False)
-
-# Veilige conversie voor Selecteer kolom (interne UI staat)
-def to_bool(val):
-    return str(val).lower() == "true"
-
-if isinstance(st.session_state.mijn_data["Selecteer"].iloc[0], str):
-    st.session_state.mijn_data["Selecteer"] = st.session_state.mijn_data["Selecteer"].apply(to_bool)
+    st.session_state.mijn_data.insert(0, "Selecteer", "False")
 
 df = st.session_state.mijn_data
 
@@ -156,7 +149,7 @@ with st.sidebar:
                 for col in DATAKOLOMMEN:
                     if col not in nieuwe_data.columns: nieuwe_data[col] = ""
                 final_upload = nieuwe_data[["ID"] + DATAKOLOMMEN].astype(str)
-                final_upload.insert(0, "Selecteer", False)
+                final_upload.insert(0, "Selecteer", "False")
                 st.session_state.mijn_data = pd.concat([st.session_state.mijn_data, final_upload], ignore_index=True)
                 sla_data_op(st.session_state.mijn_data)
                 st.rerun()
@@ -168,22 +161,24 @@ with st.sidebar:
         st.rerun()
 
 # --- KPI BEREKENING ---
-# We gebruiken een robuustere check voor KPI's
-active_mask = df["Uit voorraad"].astype(str).str.upper() != "TRUE"
-active_df = df[active_mask]
+# Alleen ruiten die NIET 'True' zijn bij Uit voorraad
+kpi_mask = df["Uit voorraad"].astype(str).str.upper() != "TRUE"
+kpi_df = df[kpi_mask]
 
 # --- HEADER & KPI's ---
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
-    aantal_numeric = pd.to_numeric(active_df["Aantal"], errors='coerce').fillna(0)
-    st.metric("In Voorraad (stuks)", int(aantal_numeric.sum()))
+    aantal_num = pd.to_numeric(kpi_df["Aantal"], errors='coerce').fillna(0)
+    st.metric("In Voorraad (stuks)", int(aantal_num.sum()))
 with c3: 
-    unieke_orders = active_df[active_df["Order"] != ""]["Order"].apply(lambda x: str(x).split('-')[0].strip()).nunique()
-    st.metric("Unieke Orders", unieke_orders)
+    orders = kpi_df[kpi_df["Order"] != ""]["Order"].apply(lambda x: str(x).split('-')[0].strip())
+    st.metric("Unieke Orders", orders.nunique())
 
-# --- ACTIEBALK & ZOEKBALK ---
-geselecteerd_ids = df[df["Selecteer"] == True]["ID"].tolist()
+# --- ACTIEBALK LOGICA ---
+# Bepaal welke ID's echt geselecteerd zijn (werkt voor zowel bool als string "True")
+mask_geselecteerd = df["Selecteer"].astype(str).str.upper() == "TRUE"
+geselecteerd_ids = df[mask_geselecteerd]["ID"].tolist()
 aantal_geselecteerd = len(geselecteerd_ids)
 
 if aantal_geselecteerd > 0:
@@ -192,20 +187,23 @@ if aantal_geselecteerd > 0:
     with col_sel:
         st.markdown(f"**{aantal_geselecteerd}** geselecteerd")
         if st.button("❌ Wissen", key="deselect_btn", use_container_width=True):
-            st.session_state.mijn_data["Selecteer"] = False
+            st.session_state.mijn_data["Selecteer"] = "False"
             st.rerun()
     with col_loc:
         c_inp, c_btn = st.columns([2, 1], gap="small", vertical_alignment="bottom")
-        with c_inp: nieuwe_locatie = st.text_input("Locatie", placeholder="Nieuwe locatie...", label_visibility="collapsed")
+        with c_inp: 
+            nieuwe_locatie = st.text_input("Locatie", placeholder="Nieuwe locatie...", label_visibility="collapsed")
         with c_btn:
             if st.button("📍 Verplaats", key="bulk_update_btn", use_container_width=True):
                 if nieuwe_locatie:
+                    # UPDATE ALLEEN DE GESELECTEERDE IDS
                     st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(geselecteerd_ids), "Locatie"] = nieuwe_locatie
-                    st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(geselecteerd_ids), "Selecteer"] = False
+                    st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(geselecteerd_ids), "Selecteer"] = "False"
                     sla_data_op(st.session_state.mijn_data)
                     st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 else:
+    # Zoekbalk zonder container
     c_in, c_zo, c_wi, c_all = st.columns([5, 1, 1, 2], gap="small", vertical_alignment="bottom")
     with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, locatie...", label_visibility="collapsed", key="zoek_input")
     with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
@@ -216,7 +214,7 @@ else:
             if zoekterm:
                 mask = temp_view.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
                 temp_view = temp_view[mask]
-            st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(temp_view["ID"]), "Selecteer"] = True
+            st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(temp_view["ID"]), "Selecteer"] = "True"
             st.rerun()
 
 # --- TABEL ---
@@ -225,7 +223,8 @@ if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# ROBUUSTERE BOOLEARN CONVERSIE (VERVANGT DE CRASHENDE .MAP FUNCTIE)
+# Data types voorbereiden voor editor (omzetten naar booleans voor de vinkjes)
+view_df["Selecteer"] = view_df["Selecteer"].astype(str).str.upper() == "TRUE"
 view_df["Uit voorraad"] = view_df["Uit voorraad"].astype(str).str.upper() == "TRUE"
 
 def highlight_stock(s):
@@ -254,12 +253,13 @@ edited_df = st.data_editor(
     key="editor"
 )
 
+# Wijzigingen opslaan
 if not edited_df.equals(view_df):
-    # Converteer booleans terug naar tekst voor opslag in session state
-    for col in ["Uit voorraad", "Selecteer"]:
-        if col in edited_df.columns:
-            edited_df[col] = edited_df[col].astype(str)
-            
-    st.session_state.mijn_data.update(edited_df)
+    # Converteer terug naar strings voordat we updaten
+    update_df = edited_df.copy()
+    update_df["Selecteer"] = update_df["Selecteer"].astype(str)
+    update_df["Uit voorraad"] = update_df["Uit voorraad"].astype(str)
+    
+    st.session_state.mijn_data.update(update_df)
     sla_data_op(st.session_state.mijn_data)
     st.rerun()
