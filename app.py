@@ -14,13 +14,14 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
     div.stButton > button { border-radius: 8px; height: 50px; font-weight: 600; }
+    .stButton button { background-color: #ff4b4b; color: white; border: none; }
+    .stButton button:hover { background-color: #ff3333; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DATABASE VERBINDING (De officiële client) ---
+# --- 2. DATABASE VERBINDING ---
 @st.cache_resource
 def get_supabase() -> Client:
-    # Haalt gegevens direct uit het [supabase] blok in je secrets
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["key"]
     return create_client(url, key)
@@ -29,16 +30,22 @@ def get_supabase() -> Client:
 @st.cache_data(ttl=60)
 def laad_data():
     client = get_supabase()
-    # Haal alles op uit de tabel 'glas_voorraad'
     res = client.table("glas_voorraad").select("*").order("id").execute()
     df = pd.DataFrame(res.data)
     if df.empty:
         return pd.DataFrame(columns=["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"])
+    # Voeg een tijdelijke kolom toe voor selectie (niet in DB)
+    df["Selecteren"] = False
     return df
 
 def update_rij(row_id, updates):
     client = get_supabase()
     client.table("glas_voorraad").update(updates).eq("id", row_id).execute()
+    st.cache_data.clear()
+
+def verwijder_rijen(row_ids):
+    client = get_supabase()
+    client.table("glas_voorraad").delete().in_("id", row_ids).execute()
     st.cache_data.clear()
 
 def voeg_data_toe(df_nieuw):
@@ -77,7 +84,6 @@ with st.sidebar:
     if uploaded_file and st.button("📤 Upload naar Database", use_container_width=True):
         try:
             nieuwe_data = pd.read_excel(uploaded_file)
-            # Kolommen mappen (Excel -> Database)
             mapping = {
                 "Locatie": "locatie", "Aantal": "aantal", 
                 "Breedte": "breedte", "Hoogte": "hoogte", 
@@ -85,11 +91,8 @@ with st.sidebar:
             }
             nieuwe_data = nieuwe_data.rename(columns=mapping)
             nieuwe_data["uit_voorraad"] = "Nee"
-            
-            # Alleen kolommen behouden die echt in de DB zitten (zonder ID, die gaat automatisch)
             cols_to_keep = ["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]
             final_upload = nieuwe_data[cols_to_keep].fillna("")
-            
             voeg_data_toe(final_upload)
             st.success("✅ Succesvol toegevoegd!")
             st.session_state.mijn_data = laad_data()
@@ -114,18 +117,21 @@ with k1:
 with k2:
     st.metric("Unieke Orders", active_df["order_nummer"].nunique())
 
-# --- 8. ZOEKFUNCTIE ---
+# --- 8. ZOEKFUNCTIE & BULK ACTIE ---
 zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed")
 view_df = df.copy()
+
 if zoekterm:
-    mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+    mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
 # --- 9. DATA EDITOR ---
+# We gebruiken de 'Selecteren' kolom om rijen aan te vinken
 edited_df = st.data_editor(
     view_df,
     column_config={
-        "id": None, # Verberg ID voor de gebruiker
+        "Selecteren": st.column_config.CheckboxColumn("Selecteer", help="Vink aan om te verwijderen", default=False),
+        "id": None, 
         "uit_voorraad": st.column_config.SelectboxColumn("Op Voorraad?", options=["Ja", "Nee"], width="medium"),
         "locatie": st.column_config.SelectboxColumn("📍 Locatie", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.NumberColumn("Aantal", disabled=True),
@@ -137,22 +143,36 @@ edited_df = st.data_editor(
     },
     hide_index=True,
     use_container_width=True,
-    height=600,
+    height=500,
     key="editor"
 )
 
-# --- 10. OPSLAAN LOGICA (Update alleen wijzigingen) ---
-if not edited_df.equals(view_df):
+# --- 10. VERWIJDER LOGICA (Meegenomen) ---
+# Check of er rijen zijn geselecteerd
+geselecteerde_rijen = edited_df[edited_df["Selecteren"] == True]
+
+if not geselecteerde_rijen.empty:
+    st.warning(f"⚠️ Je hebt {len(geselecteerde_rijen)} rij(en) geselecteerd.")
+    if st.button("🗑️ Meegenomen (Verwijderen)", use_container_width=True):
+        ids_om_te_verwijderen = geselecteerde_rijen["id"].tolist()
+        verwijder_rijen(ids_om_te_verwijderen)
+        st.success(f"✅ {len(ids_om_te_verwijderen)} items verwijderd uit de voorraad.")
+        st.session_state.mijn_data = laad_data()
+        st.rerun()
+
+# --- 11. OPSLAAN LOGICA (Voor locatie/voorraad status updates) ---
+if not edited_df.drop(columns=["Selecteren"]).equals(view_df.drop(columns=["Selecteren"])):
     for i in range(len(edited_df)):
-        # Check welke rij specifiek is aangepast
-        if not edited_df.iloc[i].equals(view_df.iloc[i]):
-            row = edited_df.iloc[i]
+        # Vergelijk rijen zonder de tijdelijke 'Selecteren' kolom
+        current_row = edited_df.iloc[i].drop("Selecteren")
+        original_row = view_df.iloc[i].drop("Selecteren")
+        
+        if not current_row.equals(original_row):
             updates = {
-                "locatie": str(row["locatie"]),
-                "uit_voorraad": str(row["uit_voorraad"])
+                "locatie": str(edited_df.iloc[i]["locatie"]),
+                "uit_voorraad": str(edited_df.iloc[i]["uit_voorraad"])
             }
-            update_rij(row["id"], updates)
+            update_rij(edited_df.iloc[i]["id"], updates)
     
-    # Vernieuw de lokale staat en de pagina
     st.session_state.mijn_data = laad_data()
     st.rerun()
