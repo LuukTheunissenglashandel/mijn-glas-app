@@ -5,7 +5,6 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- 1. CONFIGURATIE & LOCATIES ---
 WACHTWOORD = "glas123"
-# Belangrijk: Deze namen moeten exact overeenkomen met je Google Sheet headers
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
@@ -19,12 +18,13 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Header wrapping voor zichtbaarheid */
+    /* Header wrapping zodat tekst altijd zichtbaar is (2 rijen) */
     [data-testid="stDataEditor"] div[role="columnheader"] p {
         white-space: normal !important;
-        line-height: 1.2 !important;
+        line-height: 1.1 !important;
         height: auto !important;
         overflow: visible !important;
+        word-break: break-word !important;
     }
 
     div.stButton > button { border-radius: 8px; height: 50px; font-weight: 600; }
@@ -59,16 +59,13 @@ def laad_data_van_cloud():
     if df is None or df.empty:
         df = pd.DataFrame(columns=["ID"] + DATAKOLOMMEN)
 
-    # Zorg dat ID kolom bestaat
     if "ID" not in df.columns:
         df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
     
-    # Zorg dat alle DATAKOLOMMEN bestaan
     for col in DATAKOLOMMEN:
         if col not in df.columns: 
             df[col] = "Nee" if col == "Uit voorraad" else ""
 
-    # Opschonen waarden
     if "Uit voorraad" in df.columns:
         df["Uit voorraad"] = df["Uit voorraad"].astype(str).apply(
             lambda x: "Ja" if x.lower() in ["true", "ja", "1", "yes"] else "Nee"
@@ -83,6 +80,7 @@ def sla_data_op(df):
     if df.empty: return
     conn = get_connection()
     try:
+        # Altijd alles als string opslaan naar sheets om fouten te voorkomen
         conn.update(worksheet="Blad1", data=df.astype(str))
         st.cache_data.clear()
     except Exception as e:
@@ -91,7 +89,7 @@ def sla_data_op(df):
 def clear_search():
     st.session_state.zoek_input = ""
 
-# --- 4. AUTHENTICATIE & LOGOUT ---
+# --- 4. AUTHENTICATIE ---
 if "logged_in" in st.query_params:
     st.session_state.ingelogd = True
 if "ingelogd" not in st.session_state: 
@@ -139,7 +137,7 @@ with st.sidebar:
             st.rerun()
         except Exception as e: st.error(f"Fout: {e}")
 
-# --- 7. DASHBOARD ---
+# --- 7. DASHBOARD (KPI'S & LOGOUT) ---
 active_df = st.session_state.mijn_data[st.session_state.mijn_data["Uit voorraad"] == "Nee"]
 c1, c2, c3, c4 = st.columns([2, 1, 1, 0.6])
 
@@ -162,21 +160,20 @@ with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
 with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
 # --- 9. TABEL & EDITOR ---
+# We maken een kopie voor de weergave
 view_df = st.session_state.mijn_data.copy()
 
+# Filteren op zoekterm
 if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Veilig aanmaken van de checkbox kolom
+# Hulpmiddel voor checkbox
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
-# --- DE FIX VOOR DE KEYERROR ---
-# Definieer de gewenste volgorde
-volgorde_wens = ["Uit voorraad_bool", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
-# Filter alleen kolommen die daadwerkelijk bestaan in de view_df
-bestaande_kolommen = [col for col in volgorde_wens if col in view_df.columns]
-view_df = view_df[bestaande_kolommen]
+# Kolomvolgorde: Uit voorraad melden als eerste
+volgorde = ["Uit voorraad_bool", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw", "ID"]
+view_df = view_df[volgorde]
 
 edited_df = st.data_editor(
     view_df,
@@ -189,28 +186,33 @@ edited_df = st.data_editor(
         "Order": st.column_config.TextColumn("Order", width="medium"),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
-        "ID": None,            
-        "Uit voorraad": None   
+        "ID": None # Verberg ID
     },
     disabled=["Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"],
     hide_index=True,
     use_container_width=True,
     height=700,
-    key="editor"
+    key="editor_key"
 )
 
-# --- 10. OPSLAGLOGICA ---
+# --- 10. OPSLAGLOGICA (VERBETERD) ---
+# Check of er daadwerkelijk iets is aangepast in de editor
 if not edited_df.equals(view_df):
-    # Werk de originele data bij op basis van ID
-    edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
+    # Maak een kopie van de huidige data om bij te werken
+    new_data = st.session_state.mijn_data.copy()
     
-    # We gebruiken de ID om de juiste rij in de sessie-data te updaten
-    source_df = st.session_state.mijn_data.set_index("ID")
-    update_df = edited_df.set_index("ID")
+    # Gebruik ID als index voor een betrouwbare update
+    new_data.set_index("ID", inplace=True)
     
-    # Alleen de aanpasbare kolommen updaten
-    source_df.update(update_df[["Locatie", "Uit voorraad"]])
-    st.session_state.mijn_data = source_df.reset_index()
+    # Bereid de bewerkte data voor (zet bool terug naar Ja/Nee)
+    temp_edited = edited_df.copy()
+    temp_edited["Uit voorraad"] = temp_edited["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
+    temp_edited.set_index("ID", inplace=True)
     
+    # Update alleen de toegestane kolommen
+    new_data.update(temp_edited[["Locatie", "Uit voorraad"]])
+    
+    # Reset index en sla op
+    st.session_state.mijn_data = new_data.reset_index()
     sla_data_op(st.session_state.mijn_data)
     st.rerun()
