@@ -7,17 +7,24 @@ from streamlit_gsheets import GSheetsConnection
 WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 
-# De locatielijst voor de dropdown
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- 2. CSS: TABLET & KEYBOARD ONDERDRUKKING ---
+# --- 2. CSS: VERBETERDE UI & HEADER WRAPPING ---
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
+
+    /* Zorg dat headers volledig zichtbaar zijn en over 2 regels mogen */
+    [data-testid="stDataEditor"] div[role="columnheader"] p {
+        white-space: normal !important;
+        line-height: 1.2 !important;
+        height: auto !important;
+        overflow: visible !important;
+    }
 
     div.stButton > button { 
         border-radius: 8px; height: 50px; font-weight: 600; border: none; 
@@ -29,7 +36,7 @@ st.markdown("""
 
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
 
-    /* Voorkom toetsenbord pop-up op tablets bij selectie */
+    /* Voorkom toetsenbord pop-up op tablets */
     [data-testid="stDataEditor"] input {
         inputmode: none !important;
     }
@@ -91,8 +98,18 @@ def sla_data_op(df):
 def clear_search():
     st.session_state.zoek_input = ""
 
-# --- 4. AUTHENTICATIE ---
-if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
+# --- 4. AUTHENTICATIE & LOGOUT LOGICA ---
+if "logged_in" in st.query_params:
+    st.session_state.ingelogd = True
+
+if "ingelogd" not in st.session_state: 
+    st.session_state.ingelogd = False
+
+def logout():
+    st.session_state.ingelogd = False
+    st.query_params.clear()
+    st.rerun()
+
 if not st.session_state.ingelogd:
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
@@ -101,6 +118,7 @@ if not st.session_state.ingelogd:
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
+                st.query_params["logged_in"] = "true"
                 st.rerun()
             else: st.error("Fout wachtwoord")
     st.stop()
@@ -131,16 +149,21 @@ with st.sidebar:
             st.rerun()
         except Exception as e: st.error(f"Fout: {e}")
 
-# --- 7. DASHBOARD (KPI'S) ---
+# --- 7. DASHBOARD (KPI'S & LOGOUT) ---
 active_df = df[df["Uit voorraad"] == "Nee"]
-c1, c2, c3 = st.columns([2, 1, 1])
+c1, c2, c3, c4 = st.columns([2, 1, 1, 0.6]) # Extra kolom voor logout knop
+
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
     aantal_num = pd.to_numeric(active_df["Aantal"], errors='coerce').fillna(0)
-    st.metric("In Voorraad (stuks)", int(aantal_num.sum()))
+    st.metric("In Voorraad", int(aantal_num.sum()))
 with c3: 
     orders = active_df[active_df["Order"] != ""]["Order"].apply(lambda x: str(x).split('-')[0].strip())
     st.metric("Unieke Orders", orders.nunique())
+with c4:
+    st.write("") # Spacer voor uitlijning
+    if st.button("🚪 Uit", use_container_width=True, help="Uitloggen"):
+        logout()
 
 # --- 8. ZOEKFUNCTIE ---
 c_in, c_zo, c_wi = st.columns([7, 1, 1], gap="small", vertical_alignment="bottom")
@@ -153,7 +176,6 @@ st.write("")
 # --- 9. TABEL & EDITOR ---
 view_df = df.copy()
 
-# Filteren op zoekterm (GECORRIGEERDE REGEL)
 if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
@@ -161,18 +183,14 @@ if st.session_state.get("zoek_input"):
 # Zet checkbox status klaar
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
-# Volgorde: Locatie -> Aantal -> Breedte -> Hoogte -> Order -> ✅ UIT VOORRAAD -> Omschrijving
-volgorde = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad_bool", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
+# VOLGORDE: Uit voorraad_bool is de eerste kolom
+volgorde = ["Uit voorraad_bool", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
 view_df = view_df[volgorde]
 
-def highlight_stock(s):
-    return ['background-color: #ff4b4b; color: white' if s["Uit voorraad_bool"] else '' for _ in s]
-
-styled_view = view_df.style.apply(highlight_stock, axis=1)
-
 edited_df = st.data_editor(
-    styled_view,
+    view_df,
     column_config={
+        "Uit voorraad_bool": st.column_config.CheckboxColumn("Uit voorraad melden", width="small"),
         "Locatie": st.column_config.SelectboxColumn(
             "📍 Loc", 
             width="small", 
@@ -183,7 +201,6 @@ edited_df = st.data_editor(
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
-        "Uit voorraad_bool": st.column_config.CheckboxColumn("✅ Uit voorraad", width="small"),
         "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
         "ID": None,            
@@ -199,7 +216,11 @@ edited_df = st.data_editor(
 # --- 10. OPSLAGLOGICA ---
 if not edited_df.equals(view_df):
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
-    st.session_state.mijn_data.update(edited_df[["ID", "Locatie", "Uit voorraad"]])
+    
+    st.session_state.mijn_data.set_index("ID", inplace=True)
+    edited_df_idx = edited_df.set_index("ID")
+    st.session_state.mijn_data.update(edited_df_idx[["Locatie", "Uit voorraad"]])
+    st.session_state.mijn_data.reset_index(inplace=True)
+    
     sla_data_op(st.session_state.mijn_data)
-    st.success("Opgeslagen!")
     st.rerun()
