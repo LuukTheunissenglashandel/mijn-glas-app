@@ -92,8 +92,11 @@ def sla_data_op(df):
 def clear_search():
     st.session_state.zoek_input = ""
 
-# --- 4. AUTHENTICATIE ---
-if "ingelogd" not in st.session_state: 
+# --- 4. AUTHENTICATIE (MET VERVERS-PROTECTIE) ---
+# Check of de login parameter in de URL staat (voor na verversen)
+if "session" in st.query_params and st.query_params["session"] == "active":
+    st.session_state.ingelogd = True
+elif "ingelogd" not in st.session_state: 
     st.session_state.ingelogd = False
 
 if not st.session_state.ingelogd:
@@ -104,8 +107,10 @@ if not st.session_state.ingelogd:
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
+                st.query_params["session"] = "active" # Slaat login op in de URL
                 st.rerun()
-            else: st.error("Fout wachtwoord")
+            else: 
+                st.error("Fout wachtwoord")
     st.stop()
 
 # --- 5. DATA INITIALISATIE ---
@@ -141,6 +146,7 @@ with c_title:
 with c_logout:
     st.write("") # Spatiëring
     if st.button("🔴 Uitloggen", use_container_width=True):
+        st.query_params.clear() # Verwijdert login uit de URL
         st.session_state.ingelogd = False
         st.rerun()
 
@@ -177,7 +183,7 @@ view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 volgorde = ["Uit voorraad_bool", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
 view_df = view_df[volgorde]
 
-# De editor (zonder de zware styling voor maximale snelheid)
+# De editor
 edited_df = st.data_editor(
     view_df,
     column_config={
