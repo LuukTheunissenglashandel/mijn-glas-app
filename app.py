@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 
-# --- 1. CONFIGURATIE & STYLING ---
+# --- 1. CONFIGURATIE & UITGEBREIDE STYLING ---
 st.set_page_config(layout="wide", page_title="Glas Voorraad Dashboard", initial_sidebar_state="expanded")
 
 WACHTWOORD = "glas123"
@@ -13,17 +13,31 @@ st.markdown("""
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
-    div.stButton > button { border-radius: 8px; height: 50px; font-weight: 600; }
+    div.stButton > button { border-radius: 8px; height: 50px; font-weight: 600; color: white; border: none; }
     
-    /* Styling voor de rode Meegenomen/Verwijder knop */
-    div.stButton > button:first-child[key^="delete_btn"] {
+    /* RODE KNOP: Meegenomen / Verwijderen */
+    div.stButton > button[key^="bulk_delete"] {
         background-color: #ff4b4b;
-        color: white;
-        border: none;
     }
-    div.stButton > button:first-child[key^="delete_btn"]:hover {
+    div.stButton > button[key^="bulk_delete"]:hover {
         background-color: #ff3333;
-        color: white;
+    }
+
+    /* BLAUWE KNOP: Locatie aanpassen */
+    div.stButton > button[key^="bulk_update_loc"] {
+        background-color: #007bff;
+    }
+    div.stButton > button[key^="bulk_update_loc"]:hover {
+        background-color: #0056b3;
+    }
+    
+    /* Styling voor de actie-container */
+    .action-bar {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid #dee2e6;
+        margin-bottom: 20px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -46,14 +60,19 @@ def laad_data():
     df["Selecteren"] = False
     return df
 
-def update_rij(row_id, updates):
+def update_bulk_locatie(row_ids, nieuwe_locatie):
     client = get_supabase()
-    client.table("glas_voorraad").update(updates).eq("id", row_id).execute()
+    client.table("glas_voorraad").update({"locatie": nieuwe_locatie}).in_("id", row_ids).execute()
     st.cache_data.clear()
 
-def verwijder_rijen(row_ids):
+def verwijder_bulk(row_ids):
     client = get_supabase()
     client.table("glas_voorraad").delete().in_("id", row_ids).execute()
+    st.cache_data.clear()
+
+def update_rij_enkel(row_id, updates):
+    client = get_supabase()
+    client.table("glas_voorraad").update(updates).eq("id", row_id).execute()
     st.cache_data.clear()
 
 def voeg_data_toe(df_nieuw):
@@ -85,61 +104,37 @@ if 'mijn_data' not in st.session_state:
 
 df = st.session_state.mijn_data
 
-# --- 6. SIDEBAR: ROBUUSTE IMPORT ---
+# --- 6. SIDEBAR: IMPORT ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Kies Excel", type=["xlsx"], label_visibility="collapsed")
-    
     if uploaded_file and st.button("📤 Upload naar Database", use_container_width=True):
         try:
             raw_data = pd.read_excel(uploaded_file)
-            
-            # Kolommen normaliseren (kleine letters, geen spaties)
             raw_data.columns = [str(c).strip().lower() for c in raw_data.columns]
-            
-            # Slimme mapping
-            mapping = {
-                "locatie": "locatie", "loc": "locatie",
-                "aantal": "aantal", "stuks": "aantal",
-                "breedte": "breedte", "br": "breedte",
-                "hoogte": "hoogte", "hg": "hoogte",
-                "order": "order_nummer", "order_nummer": "order_nummer", "ordernr": "order_nummer",
-                "omschrijving": "omschrijving"
-            }
+            mapping = {"locatie": "locatie", "aantal": "aantal", "breedte": "breedte", "hoogte": "hoogte", "order": "order_nummer", "omschrijving": "omschrijving"}
             raw_data = raw_data.rename(columns=mapping)
             
-            vereist = ["locatie", "aantal", "breedte", "hoogte", "order_nummer"]
-            missing = [c for c in vereist if c not in raw_data.columns]
+            import_df = raw_data.dropna(subset=["order_nummer"])
+            import_df["uit_voorraad"] = "Nee"
+            for c in ["aantal", "breedte", "hoogte"]:
+                import_df[c] = pd.to_numeric(import_df[c], errors='coerce').fillna(0).astype(int)
             
-            if missing:
-                st.error(f"❌ Kolommen missen: {', '.join(missing)}")
-            else:
-                if "omschrijving" not in raw_data.columns: raw_data["omschrijving"] = ""
-                raw_data["uit_voorraad"] = "Nee"
-                
-                # Opschonen & Numeriek maken
-                import_df = raw_data.dropna(subset=["order_nummer"])
-                for c in ["aantal", "breedte", "hoogte"]:
-                    import_df[c] = pd.to_numeric(import_df[c], errors='coerce').fillna(0).astype(int)
-                
-                final_upload = import_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("")
-                
-                voeg_data_toe(final_upload)
-                st.success(f"✅ {len(final_upload)} rijen toegevoegd!")
-                st.session_state.mijn_data = laad_data()
-                st.rerun()
-        except Exception as e:
-            st.error(f"Fout bij import: {e}")
+            final_upload = import_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("")
+            voeg_data_toe(final_upload)
+            st.success("✅ Toegevoegd!")
+            st.session_state.mijn_data = laad_data()
+            st.rerun()
+        except Exception as e: st.error(f"Fout: {e}")
     
     st.divider()
-    if st.button("🔄 Data Verversen", use_container_width=True):
+    if st.button("🔄 Verversen", use_container_width=True):
         st.cache_data.clear()
         st.session_state.mijn_data = laad_data()
         st.rerun()
 
-# --- 7. DASHBOARD HEADER & KPI'S ---
+# --- 7. KPI'S ---
 st.title("🏭 Glas Voorraad Dashboard")
-
 active_df = df[df["uit_voorraad"] == "Nee"]
 k1, k2 = st.columns(2)
 with k1:
@@ -148,10 +143,8 @@ with k1:
 with k2:
     st.metric("Unieke Orders", active_df["order_nummer"].nunique() if not active_df.empty else 0)
 
-# --- 8. ZOEKFUNCTIE & ACTIE CONTAINER ---
+# --- 8. ZOEKBALK & ACTIE CONTAINER ---
 zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed")
-
-# Container voor de dynamische Meegenomen-knop
 actie_container = st.empty()
 
 view_df = df.copy()
@@ -160,16 +153,14 @@ if zoekterm:
     view_df = view_df[mask]
 
 # --- 9. DATA EDITOR ---
-# Zorg dat 'Selecteren' vooraan staat
-cols_order = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "uit_voorraad", "id"]
+cols_order = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
 view_df = view_df[cols_order]
 
 edited_df = st.data_editor(
     view_df,
     column_config={
-        "Selecteren": st.column_config.CheckboxColumn("Kies", help="Vink aan om te verwerken", default=False),
+        "Selecteren": st.column_config.CheckboxColumn("Kies", width="small", default=False),
         "id": None, 
-        "uit_voorraad": st.column_config.SelectboxColumn("Status", options=["Ja", "Nee"], width="medium"),
         "locatie": st.column_config.SelectboxColumn("📍 Locatie", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.NumberColumn("Aantal", disabled=True),
         "breedte": st.column_config.NumberColumn("Breedte", disabled=True),
@@ -179,38 +170,40 @@ edited_df = st.data_editor(
     },
     hide_index=True,
     use_container_width=True,
-    height=600,
+    height=500,
     key="editor"
 )
 
-# --- 10. DYNAMISCHE KNOP LOGICA ---
+# --- 10. DYNAMISCHE BULK ACTIES ---
 geselecteerde_rijen = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerde_rijen.empty:
     with actie_container:
-        col_btn, col_txt = st.columns([1.5, 3.5])
-        with col_btn:
-            if st.button(f"🗑️ {len(geselecteerde_rijen)} stuks Meegenomen", key="delete_btn", use_container_width=True):
-                ids_verwijderen = geselecteerde_rijen["id"].tolist()
-                verwijder_rijen(ids_verwijderen)
+        st.markdown('<div class="action-bar">', unsafe_allow_html=True)
+        col_loc, col_btn_loc, col_btn_del = st.columns([3, 3, 3])
+        
+        with col_loc:
+            nieuwe_loc = st.selectbox("Nieuwe locatie voor selectie:", LOCATIE_OPTIES, key="bulk_loc_val")
+        
+        with col_btn_loc:
+            if st.button(f"📍 Verplaats {len(geselecteerde_rijen)} stuks", key="bulk_update_loc", use_container_width=True):
+                ids = geselecteerde_rijen["id"].tolist()
+                update_bulk_locatie(ids, nieuwe_loc)
                 st.session_state.mijn_data = laad_data()
                 st.rerun()
-        with col_txt:
-            st.warning("De geselecteerde rijen worden definitief uit de database verwijderd.")
+                
+        with col_btn_del:
+            if st.button(f"🗑️ {len(geselecteerde_rijen)} stuks Meegenomen", key="bulk_delete", use_container_width=True):
+                ids = geselecteerde_rijen["id"].tolist()
+                verwijder_bulk(ids)
+                st.session_state.mijn_data = laad_data()
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 11. OPSLAAN LOGICA (Individuele wijzigingen) ---
-# Check op wijzigingen in de rest van de data (behalve de 'Selecteren' kolom)
+# --- 11. INDIVIDUELE WIJZIGINGEN OPSLAAN ---
 if not edited_df.drop(columns=["Selecteren"]).equals(view_df.drop(columns=["Selecteren"])):
     for i in range(len(edited_df)):
-        current_row = edited_df.iloc[i].drop("Selecteren")
-        original_row = view_df.iloc[i].drop("Selecteren")
-        
-        if not current_row.equals(original_row):
-            updates = {
-                "locatie": str(edited_df.iloc[i]["locatie"]),
-                "uit_voorraad": str(edited_df.iloc[i]["uit_voorraad"])
-            }
-            update_rij(edited_df.iloc[i]["id"], updates)
-    
+        if not edited_df.iloc[i].drop("Selecteren").equals(view_df.iloc[i].drop("Selecteren")):
+            update_rij_enkel(edited_df.iloc[i]["id"], {"locatie": str(edited_df.iloc[i]["locatie"])})
     st.session_state.mijn_data = laad_data()
     st.rerun()
