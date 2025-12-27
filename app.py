@@ -12,7 +12,7 @@ LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- 2. CSS: LAYOUT & STYLING ---
+# --- 2. CSS: TABLET & KEYBOARD ONDERDRUKKING ---
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
@@ -23,12 +23,16 @@ st.markdown("""
         border-radius: 8px; height: 50px; font-weight: 600; border: none; 
     }
     
-    /* Zorg dat de editor cellen goed leesbaar zijn */
     [data-testid="stDataEditor"] div {
         line-height: 1.8 !important;
     }
 
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
+
+    /* Voorkom toetsenbord pop-up op tablets bij selectie */
+    [data-testid="stDataEditor"] input {
+        inputmode: none !important;
+    }
 
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
@@ -77,7 +81,6 @@ def laad_data_van_cloud():
 def sla_data_op(df):
     if df.empty: return
     conn = get_connection()
-    # We slaan de 'Uit voorraad' status op als tekst "Ja" of "Nee"
     save_df = df.copy().astype(str)
     try:
         conn.update(worksheet="Blad1", data=save_df)
@@ -127,9 +130,8 @@ with st.sidebar:
         except Exception as e: st.error(f"Fout: {e}")
 
 # --- 7. DASHBOARD (KPI'S) ---
-current_df = st.session_state.mijn_data
-active_df = current_df[current_df["Uit voorraad"] == "Nee"]
-
+df = st.session_state.mijn_data
+active_df = df[df["Uit voorraad"] == "Nee"]
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
@@ -148,25 +150,29 @@ with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_containe
 st.write("") 
 
 # --- 9. TABEL & EDITOR ---
-# We maken een werk-dataframe voor de editor
-view_df = current_df.copy()
+# Gebruik een kopie voor de weergave
+view_df = st.session_state.mijn_data.copy()
 
-# Filteren op zoekterm
+# FILTER STAP 1: Zorg dat de Locatie-kolom alleen tekst bevat en trim spaties
+view_df["Locatie"] = view_df["Locatie"].astype(str).str.strip()
+
+# FILTER STAP 2: Belangrijk! Als een waarde NIET in de dropdown-lijst staat, maak hem leeg.
+# Dit voorkomt dat de dropdown blokkeert.
+view_df.loc[~view_df["Locatie"].isin(LOCATIE_OPTIES), "Locatie"] = ""
+
+# FILTER STAP 3: Zoekfunctie
 if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Data voorbereiden voor editor:
-# 1. Zorg dat Locatie exact matcht met de opties (geen spaties)
-view_df["Locatie"] = view_df["Locatie"].str.strip()
-# 2. Maak een boolean kolom voor de checkbox
+# Voorbereiding voor checkbox
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
-# Kolomvolgorde bepalen
+# Volgorde bepalen (Locatie staat NIET in disabled)
 volgorde = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad_bool", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
 view_df = view_df[volgorde]
 
-# De Editor
+# De Data Editor
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -190,23 +196,27 @@ edited_df = st.data_editor(
     hide_index=True,
     use_container_width=True,
     height=700,
-    key="voorraad_editor"
+    key="editor_clean"
 )
 
-# --- 10. OPSLAGLOGICA ---
-# Controleer of er wijzigingen zijn gemaakt in de editor
-if st.session_state.voorraad_editor["edited_rows"]:
-    # Update de boolean waarden terug naar "Ja"/"Nee" tekst
-    edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
-    
-    # We gebruiken de ID om de wijzigingen terug te schrijven naar de hoofd-dataframe
-    # Dit zorgt ervoor dat ook als er gefilterd is, de juiste rij wordt aangepast
-    for index, row in edited_df.iterrows():
-        original_id = row["ID"]
-        st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"] == original_id, "Locatie"] = row["Locatie"]
-        st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"] == original_id, "Uit voorraad"] = row["Uit voorraad"]
-    
-    # Opslaan naar Google Sheets
+# --- 10. OPSLAGLOGICA (Gecorrigeerd en Robuust) ---
+# Check of er daadwerkelijk een aanpassing is gedaan
+if st.session_state.editor_clean["edited_rows"]:
+    # Loop door alle aanpassingen in de editor
+    for row_idx, changes in st.session_state.editor_clean["edited_rows"].items():
+        # Vind het unieke ID van de aangepaste rij op basis van de index in de gefilterde tabel
+        rij_id = edited_df.iloc[row_idx]["ID"]
+        
+        # Update de Locatie in de hoofd-dataframe (session_state)
+        if "Locatie" in changes:
+            st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"] == rij_id, "Locatie"] = changes["Locatie"]
+        
+        # Update de Uit Voorraad status
+        if "Uit voorraad_bool" in changes:
+            status_tekst = "Ja" if changes["Uit voorraad_bool"] else "Nee"
+            st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"] == rij_id, "Uit voorraad"] = status_tekst
+
+    # Sla de hele boel op naar Google Sheets
     sla_data_op(st.session_state.mijn_data)
     st.toast("Wijzigingen opgeslagen!", icon="💾")
     st.rerun()
