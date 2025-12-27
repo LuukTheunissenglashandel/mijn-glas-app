@@ -21,7 +21,7 @@ st.markdown("""
     }
     
     /* Specifieke kleur voor de Meegenomen knop (Rood) */
-    div.stButton > button[key^="delete_btn"] {
+    div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete"] {
         background-color: #ff4b4b;
         color: white;
     }
@@ -59,8 +59,30 @@ if not st.session_state.ingelogd:
 if 'mijn_data' not in st.session_state: st.session_state.mijn_data = laad_data()
 df = st.session_state.mijn_data
 
-# --- 5. SIDEBAR ---
+# --- 5. SIDEBAR (Import & Handmatig toevoegen) ---
 with st.sidebar:
+    st.subheader("➕ Nieuwe Ruit Toevoegen")
+    with st.expander("Ruit toevoegen ➕", expanded=False):
+        with st.form("handmatige_toevoeging", clear_on_submit=True):
+            n_loc = st.selectbox("Locatie", LOCATIE_OPTIES)
+            n_order = st.text_input("Ordernummer")
+            n_aantal = st.number_input("Aantal", min_value=1, value=1)
+            n_br = st.number_input("Breedte (mm)", min_value=0)
+            n_hg = st.number_input("Hoogte (mm)", min_value=0)
+            n_oms = st.text_input("Omschrijving")
+            
+            if st.form_submit_button("VOEG TOE", use_container_width=True):
+                if n_order:
+                    nieuwe_data = {
+                        "locatie": n_loc, "order_nummer": n_order, "aantal": n_aantal,
+                        "breedte": n_br, "hoogte": n_hg, "omschrijving": n_oms, "uit_voorraad": "Nee"
+                    }
+                    get_supabase().table("glas_voorraad").insert(nieuwe_data).execute()
+                    st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
+                else:
+                    st.error("Ordernummer is verplicht!")
+
+    st.divider()
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Kies Excel", type=["xlsx"], label_visibility="collapsed")
     if uploaded_file and st.button("UPLOADEN", use_container_width=True):
@@ -82,10 +104,6 @@ with st.sidebar:
 
 # --- 6. DASHBOARD ---
 st.title("🏭 Glas Voorraad Dashboard")
-active_df = df[df["uit_voorraad"] == "Nee"]
-c1, c2 = st.columns(2)
-c1.metric("In Voorraad (stuks)", int(pd.to_numeric(active_df["aantal"], errors='coerce').sum()) if not active_df.empty else 0)
-c2.metric("Unieke Orders", active_df["order_nummer"].nunique())
 
 zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed")
 actie_placeholder = st.empty()
@@ -96,20 +114,21 @@ if zoekterm:
     view_df = view_df[mask]
 
 # --- 7. TABEL ---
+# Hoogte is aangepast naar 600 voor een betere weergave
 edited_df = st.data_editor(
     view_df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]],
     column_config={
         "Selecteren": st.column_config.CheckboxColumn("Kies", width="small"),
         "id": None,
         "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
-        "aantal": st.column_config.NumberColumn("Aant.", width="small", disabled=True),
-        "breedte": st.column_config.NumberColumn("Br.", width="small", disabled=True),
-        "hoogte": st.column_config.NumberColumn("Hg.", width="small", disabled=True),
+        "aantal": st.column_config.NumberColumn("Aant.", width="small"),
+        "breedte": st.column_config.NumberColumn("Br.", width="small"),
+        "hoogte": st.column_config.NumberColumn("Hg.", width="small"),
     },
-    hide_index=True, use_container_width=True, key="editor"
+    hide_index=True, use_container_width=True, key="editor", height=600
 )
 
-# --- 8. ACTIEBALK (STREKKER & UITGELIJND) ---
+# --- 8. ACTIEBALK & DUBBELCHECK ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerd.empty:
@@ -128,13 +147,43 @@ if not geselecteerd.empty:
                 st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
                 
         with col_b2:
-            if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
-                get_supabase().table("glas_voorraad").delete().in_("id", geselecteerd["id"].tolist()).execute()
-                st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
+            # Dubbelcheck logica
+            if f"confirm_delete" not in st.session_state:
+                st.session_state.confirm_delete = False
 
-# --- 9. HANDMATIGE LOCATIE WIJZIGING ---
+            if not st.session_state.confirm_delete:
+                if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
+                    st.session_state.confirm_delete = True
+                    st.rerun()
+            else:
+                st.warning("Zeker weten?")
+                c_yes, c_no = st.columns(2)
+                if c_yes.button("JA, VERWIJDER", key="confirm_delete_yes", use_container_width=True):
+                    get_supabase().table("glas_voorraad").delete().in_("id", geselecteerd["id"].tolist()).execute()
+                    st.session_state.confirm_delete = False
+                    st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
+                if c_no.button("ANNULEER", use_container_width=True):
+                    st.session_state.confirm_delete = False
+                    st.rerun()
+
+# --- 9. HANDMATIGE LOCATIE OF DATA WIJZIGING ---
+# Controleer of er iets gewijzigd is in de editor buiten de checkbox om
 if not edited_df.drop(columns=["Selecteren"]).equals(view_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]):
+    # We lopen door de rijen om te zien wat er is aangepast (vereenvoudigd voor deze context)
     for i in range(len(edited_df)):
-        if edited_df.iloc[i]["locatie"] != view_df.iloc[i]["locatie"]:
-            get_supabase().table("glas_voorraad").update({"locatie": str(edited_df.iloc[i]["locatie"])}).eq("id", edited_df.iloc[i]["id"]).execute()
+        orig_row = view_df[view_df["id"] == edited_df.iloc[i]["id"]].iloc[0]
+        curr_row = edited_df.iloc[i]
+        
+        # Als er een verschil is, update de database
+        if not curr_row.drop("Selecteren").equals(orig_row[curr_row.drop("Selecteren").index]):
+            update_data = {
+                "locatie": str(curr_row["locatie"]),
+                "aantal": int(curr_row["aantal"]),
+                "breedte": int(curr_row["breedte"]),
+                "hoogte": int(curr_row["hoogte"]),
+                "omschrijving": str(curr_row["omschrijving"]),
+                "order_nummer": str(curr_row["order_nummer"])
+            }
+            get_supabase().table("glas_voorraad").update(update_data).eq("id", curr_row["id"]).execute()
+    
     st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
