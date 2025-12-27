@@ -12,7 +12,7 @@ LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- 2. CSS: TABLET & KEYBOARD ONDERDRUKKING ---
+# --- 2. CSS: LAYOUT & STYLING ---
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
@@ -23,16 +23,12 @@ st.markdown("""
         border-radius: 8px; height: 50px; font-weight: 600; border: none; 
     }
     
+    /* Zorg dat de editor cellen goed leesbaar zijn */
     [data-testid="stDataEditor"] div {
         line-height: 1.8 !important;
     }
 
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
-
-    /* Voorkom toetsenbord pop-up op tablets bij selectie */
-    [data-testid="stDataEditor"] input {
-        inputmode: none !important;
-    }
 
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
@@ -81,6 +77,7 @@ def laad_data_van_cloud():
 def sla_data_op(df):
     if df.empty: return
     conn = get_connection()
+    # We slaan de 'Uit voorraad' status op als tekst "Ja" of "Nee"
     save_df = df.copy().astype(str)
     try:
         conn.update(worksheet="Blad1", data=save_df)
@@ -109,8 +106,6 @@ if not st.session_state.ingelogd:
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
 
-df = st.session_state.mijn_data
-
 # --- 6. SIDEBAR: IMPORT ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
@@ -132,7 +127,9 @@ with st.sidebar:
         except Exception as e: st.error(f"Fout: {e}")
 
 # --- 7. DASHBOARD (KPI'S) ---
-active_df = df[df["Uit voorraad"] == "Nee"]
+current_df = st.session_state.mijn_data
+active_df = current_df[current_df["Uit voorraad"] == "Nee"]
+
 c1, c2, c3 = st.columns([2, 1, 1])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: 
@@ -151,27 +148,27 @@ with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_containe
 st.write("") 
 
 # --- 9. TABEL & EDITOR ---
-view_df = df.copy()
+# We maken een werk-dataframe voor de editor
+view_df = current_df.copy()
 
-# Filteren op zoekterm (GECORRIGEERDE REGEL)
+# Filteren op zoekterm
 if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# Zet checkbox status klaar
+# Data voorbereiden voor editor:
+# 1. Zorg dat Locatie exact matcht met de opties (geen spaties)
+view_df["Locatie"] = view_df["Locatie"].str.strip()
+# 2. Maak een boolean kolom voor de checkbox
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
-# Volgorde: Locatie -> Aantal -> Breedte -> Hoogte -> Order -> ✅ UIT VOORRAAD -> Omschrijving
+# Kolomvolgorde bepalen
 volgorde = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad_bool", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
 view_df = view_df[volgorde]
 
-def highlight_stock(s):
-    return ['background-color: #ff4b4b; color: white' if s["Uit voorraad_bool"] else '' for _ in s]
-
-styled_view = view_df.style.apply(highlight_stock, axis=1)
-
+# De Editor
 edited_df = st.data_editor(
-    styled_view,
+    view_df,
     column_config={
         "Locatie": st.column_config.SelectboxColumn(
             "📍 Loc", 
@@ -193,13 +190,23 @@ edited_df = st.data_editor(
     hide_index=True,
     use_container_width=True,
     height=700,
-    key="editor"
+    key="voorraad_editor"
 )
 
 # --- 10. OPSLAGLOGICA ---
-if not edited_df.equals(view_df):
+# Controleer of er wijzigingen zijn gemaakt in de editor
+if st.session_state.voorraad_editor["edited_rows"]:
+    # Update de boolean waarden terug naar "Ja"/"Nee" tekst
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
-    st.session_state.mijn_data.update(edited_df[["ID", "Locatie", "Uit voorraad"]])
+    
+    # We gebruiken de ID om de wijzigingen terug te schrijven naar de hoofd-dataframe
+    # Dit zorgt ervoor dat ook als er gefilterd is, de juiste rij wordt aangepast
+    for index, row in edited_df.iterrows():
+        original_id = row["ID"]
+        st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"] == original_id, "Locatie"] = row["Locatie"]
+        st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"] == original_id, "Uit voorraad"] = row["Uit voorraad"]
+    
+    # Opslaan naar Google Sheets
     sla_data_op(st.session_state.mijn_data)
-    st.success("Opgeslagen!")
+    st.toast("Wijzigingen opgeslagen!", icon="💾")
     st.rerun()
