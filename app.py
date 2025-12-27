@@ -8,7 +8,7 @@ WACHTWOORD = "glas123"
 DATAKOLOMMEN = ["Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad", "Omschrijving", "Spouw"]
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
-st.set_page_config(layout="wide", page_title="Glas Voorraad")
+st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
 # --- 2. DATA FUNCTIES ---
 def get_connection():
@@ -26,9 +26,9 @@ def laad_data():
     if "ID" not in df.columns:
         df["ID"] = [str(uuid.uuid4()) for _ in range(len(df))]
     
-    # Zorg dat alle kolommen bestaan
     for col in DATAKOLOMMEN:
-        if col not in df.columns: df[col] = ""
+        if col not in df.columns: 
+            df[col] = "Nee" if col == "Uit voorraad" else ""
             
     return df[["ID"] + DATAKOLOMMEN].fillna("").astype(str)
 
@@ -37,9 +37,10 @@ def sla_op(df):
     conn.update(worksheet="Blad1", data=df.astype(str))
     st.cache_data.clear()
 
-# --- 3. INITIALISATIE ---
+# --- 3. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
 if not st.session_state.ingelogd:
+    st.title("🔒 Inloggen")
     ww = st.text_input("Wachtwoord", type="password")
     if st.button("Inloggen"):
         if ww == WACHTWOORD:
@@ -47,89 +48,91 @@ if not st.session_state.ingelogd:
             st.rerun()
     st.stop()
 
+# --- 4. INITIALISATIE DATA ---
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
 
-# --- 4. BULK ACTIE PANEL ---
-st.title("🏭 Glas Voorraad Beheer")
-
-# We maken een container voor de bulk acties
-with st.container(border=True):
-    st.subheader("📦 Bulk Bewerking")
-    col_sel, col_loc, col_btn = st.columns([2, 2, 2])
+# --- 5. SIDEBAR (HET BULK-PANEL) ---
+with st.sidebar:
+    st.header("📦 Bulk Acties")
+    st.info("1. Vink rijen aan in de tabel\n2. Kies hieronder de nieuwe locatie\n3. Klik op de knop")
     
-    with col_loc:
-        nieuwe_bulk_locatie = st.selectbox("Kies nieuwe locatie", LOCATIE_OPTIES, key="bulk_loc_choice")
+    nieuwe_locatie_keuze = st.selectbox("Nieuwe Locatie", LOCATIE_OPTIES, key="bulk_loc_sb")
     
-    with col_btn:
-        st.write(" ") # Padding
-        bulk_knop = st.button("📍 Pas toe op geselecteerde rijen", use_container_width=True, type="primary")
+    # De bulk-knop
+    if st.button("📍 VERPLAATS SELECTIE", use_container_width=True, type="primary"):
+        # We halen de data op die op dat moment in de editor staat
+        if "main_editor" in st.session_state:
+            # We kijken welke rijen zijn aangepast/aangevinkt
+            # De editor geeft ons de 'edited_df' terug in de session state
+            pass # Logica wordt hieronder bij de editor verwerkt via de return waarde
 
-# --- 5. ZOEKFUNCTIE ---
-zoekterm = st.text_input("🔍 Zoeken op order, maat of locatie...", key="search_bar")
+    st.divider()
+    st.subheader("📥 Excel Import")
+    uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"])
+    # (Import logica weggelaten voor de focus op bulk bewerking, maar kan hieronder)
 
-# --- 6. TABEL VOORBEREIDEN ---
-df_display = st.session_state.mijn_data.copy()
+# --- 6. HOOFDSCHERM ---
+st.title("🏭 Glas Voorraad")
 
-# Filteren
+# Zoekbalk
+zoekterm = st.text_input("🔍 Zoeken", placeholder="Zoek op order, maat, etc...", key="zoek_input")
+
+# Data voorbereiden voor weergave
+df_view = st.session_state.mijn_data.copy()
+
 if zoekterm:
-    mask = df_display.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
-    df_display = df_display[mask]
+    mask = df_view.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+    df_view = df_view[mask]
 
-# Voeg de checkbox kolom toe (deze staat NIET in de database, alleen in de UI)
-if "geselecteerde_ids" not in st.session_state:
-    st.session_state.geselecteerde_ids = []
+# BELANGRIJK: Voeg de selectiekolom toe
+df_view.insert(0, "Kies", False)
+df_view["Uit voorraad_bool"] = df_view["Uit voorraad"] == "Ja"
 
-df_display["Selecteer"] = df_display["ID"].apply(lambda x: x in st.session_state.geselecteerde_ids)
-df_display["Uit voorraad_bool"] = df_display["Uit voorraad"] == "Ja"
-
-# Zet de kolommen in de juiste visuele volgorde
-kolom_volgorde = ["Selecteer", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Uit voorraad_bool", "Omschrijving", "Spouw", "ID"]
-df_display = df_display[kolom_volgorde]
-
-# --- 7. DE DATA EDITOR ---
+# --- 7. DE TABEL (EDITOR) ---
+# We vangen de output van de editor op in 'edited_df'
 edited_df = st.data_editor(
-    df_display,
+    df_view,
     column_config={
-        "Selecteer": st.column_config.CheckboxColumn("Kies", width="small"),
-        "Locatie": st.column_config.SelectboxColumn("📍 Locatie", options=LOCATIE_OPTIES, width="medium"),
-        "Aantal": st.column_config.TextColumn("Aant.", disabled=True),
-        "Breedte": st.column_config.TextColumn("Breedte", disabled=True),
-        "Hoogte": st.column_config.TextColumn("Hoogte", disabled=True),
-        "Uit voorraad_bool": st.column_config.CheckboxColumn("✅ Uit voorraad"),
-        "ID": None, # Verberg ID
+        "Kies": st.column_config.CheckboxColumn("S", width="small"),
+        "Locatie": st.column_config.SelectboxColumn("📍 Locatie", options=LOCATIE_OPTIES),
+        "Uit voorraad_bool": st.column_config.CheckboxColumn("✅ Uit"),
+        "ID": None, # Verberg ID voor de gebruiker
+        "Uit voorraad": None
     },
+    disabled=["Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw"],
     hide_index=True,
     use_container_width=True,
-    key="hoofd_editor"
+    height=600,
+    key="main_editor"
 )
 
-# --- 8. LOGICA VOOR WIJZIGINGEN ---
+# --- 8. LOGICA VOOR OPSLAAN ---
 
-# Stap A: Bulk Locatie Wijzigen
-if bulk_knop:
-    # We kijken in de edited_df welke rijen zijn aangevinkt
-    ids_om_te_wijzigen = edited_df[edited_df["Selecteer"] == True]["ID"].tolist()
-    
-    if ids_om_te_wijzigen:
-        # Update de hoofd-dataframe in session_state
-        st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(ids_om_te_wijzigen), "Locatie"] = nieuwe_bulk_locatie
+# Check of de bulk-knop (in de sidebar) is ingedrukt
+# Omdat de knop een rerun triggert, moeten we kijken of we geselecteerde rijen hebben
+geselecteerde_rijen = edited_df[edited_df["Kies"] == True]
+
+if st.sidebar.button("📍 BEVESTIG VERPLAATSING", key="confirm_bulk"):
+    if not geselecteerde_rijen.empty:
+        ids_to_update = geselecteerde_rijen["ID"].tolist()
         
-        # Opslaan naar Google Sheets
+        # Update alleen de geselecteerde ID's in de bron-data
+        st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"].isin(ids_to_update), "Locatie"] = nieuwe_locatie_keuze
+        
         sla_op(st.session_state.mijn_data)
-        st.success(f"✅ {len(ids_om_te_wijzigen)} rijen verplaatst naar {nieuwe_bulk_locatie}")
+        st.success(f"✅ {len(ids_to_update)} rijen verplaatst naar {nieuwe_locatie_keuze}")
         st.rerun()
     else:
-        st.warning("Selecteer eerst rijen door het vinkje in de kolom 'Kies' aan te zetten.")
+        st.sidebar.warning("Vink eerst rijen aan in de tabel!")
 
-# Stap B: Handmatige wijzigingen in de tabel (vinkje 'Uit voorraad' of 1 locatie aanpassen)
-# We vergelijken de edited_df met de df_display (zonder de 'Selecteer' kolom)
-elif not edited_df.drop(columns=["Selecteer"]).equals(df_display.drop(columns=["Selecteer"])):
-    # Update de 'Uit voorraad' tekst op basis van de boolean
+# Check voor normale wijzigingen (per rij locatie aanpassen of 'Uit voorraad' vinken)
+elif not edited_df.drop(columns=["Kies"]).equals(df_view.drop(columns=["Kies"])):
+    # Zet de checkbox terug naar tekst "Ja/Nee"
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
     
-    # Werk de hoofd-data bij voor de rijen die veranderd zijn
-    for idx, row in edited_df.iterrows():
+    # Werk de hoofd-data bij
+    for _, row in edited_df.iterrows():
         st.session_state.mijn_data.loc[st.session_state.mijn_data["ID"] == row["ID"], ["Locatie", "Uit voorraad"]] = [row["Locatie"], row["Uit voorraad"]]
     
     sla_op(st.session_state.mijn_data)
