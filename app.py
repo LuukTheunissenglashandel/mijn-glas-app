@@ -8,7 +8,6 @@ st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_st
 WACHTWOORD = "glas123"
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
-# Terug naar de originele CSS
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
@@ -16,20 +15,17 @@ st.markdown("""
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
     div.stButton > button { 
-        border-radius: 8px; height: 50px; font-weight: 600; border: none; 
+        border-radius: 8px; height: 50px; font-weight: 600; 
     }
     
-    /* Checkbox kolom visueel duidelijker */
-    [data-testid="stDataEditor"] div {
-        line-height: 1.8 !important;
+    /* Gekleurde knop voor 'Meegenomen' */
+    div.stButton > button[key="meegenomen_btn"] {
+        background-color: #2e7d32;
+        color: white;
+        border: none;
     }
 
     input[type=checkbox] { transform: scale(1.5); cursor: pointer; }
-
-    /* Voorkom toetsenbord pop-up op tablets bij selectie */
-    [data-testid="stDataEditor"] input {
-        inputmode: none !important;
-    }
 
     @media only screen and (max-width: 1024px) {
         section[data-testid="stSidebar"] { display: none !important; }
@@ -46,7 +42,7 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 # --- 3. DATA FUNCTIES ---
-@st.cache_data(ttl=0) # TTL op 0 voor directe feedback zoals in origineel
+@st.cache_data(ttl=0)
 def laad_data():
     try:
         client = get_supabase()
@@ -58,9 +54,11 @@ def laad_data():
     except:
         return pd.DataFrame()
 
-def update_rij(row_id, updates):
+def update_bulk(ids, nieuwe_status):
     client = get_supabase()
-    client.table("glas_voorraad").update(updates).eq("id", row_id).execute()
+    # Update meerdere rijen tegelijk naar Ja of Nee
+    for rid in ids:
+        client.table("glas_voorraad").update({"uit_voorraad": nieuwe_status}).eq("id", rid).execute()
     st.cache_data.clear()
 
 def voeg_data_toe(df_nieuw):
@@ -89,7 +87,7 @@ if not st.session_state.ingelogd:
                 st.error("Fout wachtwoord")
     st.stop()
 
-# --- 5. DATA INITIALISATIE ---
+# --- 5. DATA LADEN ---
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
 
@@ -105,24 +103,14 @@ with st.sidebar:
             mapping = {"Locatie": "locatie", "Aantal": "aantal", "Breedte": "breedte", "Hoogte": "hoogte", "Order": "order_nummer", "Omschrijving": "omschrijving"}
             nieuwe_data = nieuwe_data.rename(columns=mapping)
             nieuwe_data["uit_voorraad"] = "Nee"
-            
-            cols = ["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]
-            final_upload = nieuwe_data[cols].fillna("")
+            final_upload = nieuwe_data[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("")
             voeg_data_toe(final_upload)
             st.session_state.mijn_data = laad_data()
             st.rerun()
         except Exception as e: st.error(f"Fout: {e}")
 
-# --- 7. DASHBOARD HEADER ---
-c_title, c_logout = st.columns([8, 2])
-with c_title: 
-    st.title("🏭 Glas Voorraad")
-with c_logout:
-    if st.button("🔴 Uitloggen", use_container_width=True):
-        st.session_state.ingelogd = False
-        st.rerun()
-
-# KPI'S
+# --- 7. DASHBOARD HEADER & KPI'S ---
+st.title("🏭 Glas Voorraad")
 active_df = df[df["uit_voorraad"] == "Nee"]
 kpi1, kpi2 = st.columns([1, 1])
 with kpi1: 
@@ -137,62 +125,66 @@ with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, m
 with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
 with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
+# --- 9. DE 'MEEGENOMEN' KNOP ONDER DE ZOEKBALK ---
 st.write("") 
-
-# --- 9. TABEL & EDITOR (HERSTELDE OPMAAK) ---
 view_df = df.copy()
 
 if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# De Checkbox-logica herstellen (Ja/Nee omzetten naar boolean voor de editor)
-view_df["Uit voorraad_bool"] = view_df["uit_voorraad"] == "Ja"
-
-# PRECIES DEZELFDE VOLGORDE ALS EERST
-volgorde = ["Uit voorraad_bool", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
+# Maak checkboxes klaar
+view_df["Selectie"] = False
+# Volgorde herstellen
+volgorde = ["Selectie", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id", "uit_voorraad"]
 view_df = view_df[volgorde]
 
+# De knop onder de zoekbalk
+col_btn, col_spacer = st.columns([3, 7])
+with col_btn:
+    btn_label = "✅ Geselecteerde ruiten op MEEGENOMEN zetten"
+    meegenomen_klik = st.button(btn_label, key="meegenomen_btn", use_container_width=True)
+
+# --- 10. TABEL EDITOR ---
 edited_df = st.data_editor(
     view_df,
     column_config={
-        "Uit voorraad_bool": st.column_config.CheckboxColumn(
-            "Uit voorraad\nmelden", 
-            help="Vink aan om uit de voorraad te halen",
-            width="medium"
-        ),
-        "locatie": st.column_config.SelectboxColumn(
-            "📍 Loc", 
-            width="small", 
-            options=LOCATIE_OPTIES,
-            required=True
-        ),
+        "Selectie": st.column_config.CheckboxColumn("Kies", width="small"),
+        "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.TextColumn("Aant.", width="small", disabled=True),
         "breedte": st.column_config.TextColumn("Br.", width="small", disabled=True),
         "hoogte": st.column_config.TextColumn("Hg.", width="small", disabled=True),
         "order_nummer": st.column_config.TextColumn("Order", width="medium", disabled=True),
         "omschrijving": st.column_config.TextColumn("Omschrijving", width="large", disabled=True),
-        "id": None # ID blijft verborgen
+        "id": None,
+        "uit_voorraad": None
     },
     hide_index=True,
     use_container_width=True,
-    height=700,
+    height=600,
     key="editor"
 )
 
-# --- 10. SNELLE OPSLAGLOGICA ---
-if not edited_df.equals(view_df):
-    for i in range(len(edited_df)):
-        if not edited_df.iloc[i].equals(view_df.iloc[i]):
-            row = edited_df.iloc[i]
-            # Zet de checkbox weer om naar "Ja" of "Nee" voor de database
-            nieuwe_status = "Ja" if row["Uit voorraad_bool"] else "Nee"
-            
-            updates = {
-                "locatie": str(row["locatie"]),
-                "uit_voorraad": nieuwe_status
-            }
-            update_rij(row["id"], updates)
+# --- 11. VERWERK KNOP LOGICA ---
+if meegenomen_klik:
+    # Zoek alle rijen die zijn aangevinkt
+    geselecteerde_ids = edited_df[edited_df["Selectie"] == True]["id"].tolist()
     
+    if geselecteerde_ids:
+        update_bulk(geselecteerde_ids, "Ja")
+        st.success(f"✅ {len(geselecteerde_ids)} ruiten verwerkt!")
+        st.session_state.mijn_data = laad_data()
+        st.rerun()
+    else:
+        st.warning("Vink eerst minimaal één ruit aan in de kolom 'Kies'.")
+
+# Check of de locatie handmatig is aangepast (zonder de knop)
+if not edited_df["locatie"].equals(view_df["locatie"]):
+    for i in range(len(edited_df)):
+        if edited_df.iloc[i]["locatie"] != view_df.iloc[i]["locatie"]:
+            row = edited_df.iloc[i]
+            client = get_supabase()
+            client.table("glas_voorraad").update({"locatie": str(row["locatie"])}).eq("id", row["id"]).execute()
+    st.cache_data.clear()
     st.session_state.mijn_data = laad_data()
     st.rerun()
