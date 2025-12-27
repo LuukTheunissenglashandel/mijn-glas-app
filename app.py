@@ -17,7 +17,7 @@ st.markdown("""
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
-    /* Zorg dat headers (1e rij) tekst afbreken naar meerdere regels */
+    /* Zorg dat headers tekst afbreken naar 2 regels */
     [data-testid="stDataEditor"] div[role="columnheader"] p {
         white-space: normal !important;
         line-height: 1.1 !important;
@@ -81,7 +81,7 @@ def sla_data_op(df):
 def clear_search():
     st.session_state.zoek_input = ""
 
-# --- 4. AUTHENTICATIE (MET REFRESH FIX) ---
+# --- 4. AUTHENTICATIE (ONTHOUDT LOGIN) ---
 if "logged_in" in st.query_params:
     st.session_state.ingelogd = True
 
@@ -95,7 +95,7 @@ if not st.session_state.ingelogd:
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
-                st.query_params["logged_in"] = "true" # Sla op in URL voor refresh
+                st.query_params["logged_in"] = "true"
                 st.rerun()
             else: st.error("Fout wachtwoord")
     st.stop()
@@ -104,13 +104,11 @@ if not st.session_state.ingelogd:
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data_van_cloud()
 
-df = st.session_state.mijn_data
-
 # --- 6. SIDEBAR: IMPORT ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Bestand kiezen", type=["xlsx"], label_visibility="collapsed")
-    if uploaded_file and st.button("📤 Toevoegen", key="upload_btn"):
+    if uploaded_file and st.button("📤 Toevoegen"):
         try:
             nieuwe_data = pd.read_excel(uploaded_file)
             nieuwe_data.columns = [c.strip().capitalize() for c in nieuwe_data.columns]
@@ -127,7 +125,7 @@ with st.sidebar:
         except Exception as e: st.error(f"Fout: {e}")
 
 # --- 7. DASHBOARD (KPI'S & UITLOGGEN) ---
-active_df = df[df["Uit voorraad"] == "Nee"]
+active_df = st.session_state.mijn_data[st.session_state.mijn_data["Uit voorraad"] == "Nee"]
 c1, c2, c3, c4 = st.columns([2, 1, 1, 0.6])
 with c1: st.title("🏭 Glas Voorraad")
 with c2: st.metric("In Voorraad", int(pd.to_numeric(active_df["Aantal"], errors='coerce').sum()))
@@ -135,8 +133,8 @@ with c3:
     unique_orders = active_df[active_df["Order"] != ""]["Order"].nunique()
     st.metric("Unieke Orders", unique_orders)
 with c4:
-    st.write("") # Spacer
-    if st.button("🚪 Uit", help="Handmatig uitloggen"):
+    st.write("") 
+    if st.button("🚪 Uit", help="Uitloggen"):
         st.session_state.ingelogd = False
         st.query_params.clear()
         st.rerun()
@@ -147,10 +145,8 @@ with c_in: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek...", label_
 with c_zo: st.button("🔍", key="search_btn", use_container_width=True)
 with c_wi: st.button("❌", key="clear_btn", on_click=clear_search, use_container_width=True)
 
-st.write("") 
-
-# --- 9. TABEL & EDITOR ---
-view_df = df.copy()
+# --- 9. TABEL VOORBEREIDEN ---
+view_df = st.session_state.mijn_data.copy()
 
 if st.session_state.get("zoek_input"):
     mask = view_df.astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_input, case=False)).any(axis=1)
@@ -158,12 +154,12 @@ if st.session_state.get("zoek_input"):
 
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
-# NIEUWE VOLGORDE: Uit voorraad_bool staat nu op index 0
+# Kolomvolgorde: Uit voorraad melden als eerste
 volgorde = ["Uit voorraad_bool", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
 view_df = view_df[volgorde]
 
 edited_df = st.data_editor(
-    view_df, # Geen styling meer voor maximale snelheid
+    view_df,
     column_config={
         "Uit voorraad_bool": st.column_config.CheckboxColumn("Uit voorraad melden", width="small"),
         "Locatie": st.column_config.SelectboxColumn("📍 Loc", width="small", options=LOCATIE_OPTIES, required=True),
@@ -183,19 +179,21 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- 10. OPSLAGLOGICA (BEHOUDEN VAN JE WERKENDO LOGICA) ---
+# --- 10. OPSLAGLOGICA (DE FIX VOOR KEYERROR) ---
 if not edited_df.equals(view_df):
     # Converteer checkbox terug naar tekst
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
     
-    # Update de hoofdtabel op basis van ID (dit was je werkende mechanisme)
-    # We zetten ID even als index voor een perfecte match
-    st.session_state.mijn_data.set_index("ID", inplace=True)
-    edited_df_for_update = edited_df.set_index("ID")
+    # Maak een kopie van de masterdata
+    main_df = st.session_state.mijn_data.copy()
     
-    st.session_state.mijn_data.update(edited_df_for_update[["Locatie", "Uit voorraad"]])
-    st.session_state.mijn_data.reset_index(inplace=True)
+    # Voer de update uit op basis van ID zonder de master-index permanent te veranderen
+    main_df = main_df.set_index("ID")
+    edited_updates = edited_df.set_index("ID")[["Locatie", "Uit voorraad"]]
     
+    main_df.update(edited_updates)
+    
+    # Zet ID weer terug als kolom en sla op
+    st.session_state.mijn_data = main_df.reset_index()
     sla_data_op(st.session_state.mijn_data)
-    st.success("Opgeslagen!")
     st.rerun()
