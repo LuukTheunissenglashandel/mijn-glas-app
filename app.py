@@ -2,9 +2,22 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 
-# --- 1. CONFIGURATIE & STYLING ---
+# --- 1. CONFIGURATIE ---
 st.set_page_config(layout="wide", page_title="Glas Voorraad Dashboard", initial_sidebar_state="expanded")
 
+# --- 2. DE LEUGENDETECTOR (DEBUG) ---
+# Dit blok controleert of de 'sleutels' aanwezig zijn in de kluis
+if "supabase" not in st.secrets:
+    st.error("❌ De app ziet het blok [supabase] NIET in de secrets.")
+    st.write("Beschikbare blokken in je kluis op dit moment:", list(st.secrets.keys()))
+    st.info("Ga naar Streamlit Cloud -> Settings -> Secrets en zorg dat er [supabase] boven je url en key staat.")
+    st.stop()
+else:
+    # Als alles goed gaat, zie je dit heel kort bovenin. 
+    # Je kunt dit weghalen zodra de app werkt.
+    st.toast("✅ [supabase] blok gevonden!", icon="🚀")
+
+# --- 3. CONFIGURATIE & STYLING ---
 WACHTWOORD = "glas123"
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
@@ -17,24 +30,24 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DATABASE VERBINDING (De officiële client) ---
+# --- 4. DATABASE VERBINDING ---
 @st.cache_resource
 def get_supabase() -> Client:
-    # Haalt gegevens direct uit het [supabase] blok in je secrets
+    # Hier halen we de data nu echt uit het gevonden blok
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["key"]
     return create_client(url, key)
 
-# --- 3. DATA FUNCTIES ---
+# --- 5. DATA FUNCTIES ---
 @st.cache_data(ttl=60)
 def laad_data():
-    client = get_supabase()
-    # Haal alles op uit de tabel 'glas_voorraad'
-    res = client.table("glas_voorraad").select("*").order("id").execute()
-    df = pd.DataFrame(res.data)
-    if df.empty:
+    try:
+        client = get_supabase()
+        res = client.table("glas_voorraad").select("*").order("id").execute()
+        return pd.DataFrame(res.data)
+    except Exception as e:
+        st.error(f"Databasefout: {e}")
         return pd.DataFrame(columns=["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"])
-    return df
 
 def update_rij(row_id, updates):
     client = get_supabase()
@@ -47,7 +60,7 @@ def voeg_data_toe(df_nieuw):
     client.table("glas_voorraad").insert(data_dict).execute()
     st.cache_data.clear()
 
-# --- 4. AUTHENTICATIE ---
+# --- 6. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = False
 
@@ -64,20 +77,19 @@ if not st.session_state.ingelogd:
                 st.error("Fout wachtwoord")
     st.stop()
 
-# --- 5. DATA LADEN ---
+# --- 7. DATA INITIALISATIE ---
 if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
 
 df = st.session_state.mijn_data
 
-# --- 6. SIDEBAR: EXCEL IMPORT ---
+# --- 8. SIDEBAR: EXCEL IMPORT ---
 with st.sidebar:
     st.subheader("📥 Excel Import")
     uploaded_file = st.file_uploader("Kies Excel bestand", type=["xlsx"], label_visibility="collapsed")
     if uploaded_file and st.button("📤 Upload naar Database", use_container_width=True):
         try:
             nieuwe_data = pd.read_excel(uploaded_file)
-            # Kolommen mappen (Excel -> Database)
             mapping = {
                 "Locatie": "locatie", "Aantal": "aantal", 
                 "Breedte": "breedte", "Hoogte": "hoogte", 
@@ -86,7 +98,6 @@ with st.sidebar:
             nieuwe_data = nieuwe_data.rename(columns=mapping)
             nieuwe_data["uit_voorraad"] = "Nee"
             
-            # Alleen kolommen behouden die echt in de DB zitten (zonder ID, die gaat automatisch)
             cols_to_keep = ["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]
             final_upload = nieuwe_data[cols_to_keep].fillna("")
             
@@ -95,7 +106,7 @@ with st.sidebar:
             st.session_state.mijn_data = laad_data()
             st.rerun()
         except Exception as e:
-            st.error(f"Fout: {e}")
+            st.error(f"Fout bij upload: {e}")
     
     st.divider()
     if st.button("🔄 Data Verversen", use_container_width=True):
@@ -103,29 +114,30 @@ with st.sidebar:
         st.session_state.mijn_data = laad_data()
         st.rerun()
 
-# --- 7. DASHBOARD HEADER & KPI'S ---
+# --- 9. DASHBOARD ---
 st.title("🏭 Glas Voorraad Dashboard")
 
+# KPI's
 active_df = df[df["uit_voorraad"] == "Nee"]
 k1, k2 = st.columns(2)
 with k1:
     totaal = pd.to_numeric(active_df["aantal"], errors='coerce').sum()
     st.metric("In Voorraad (stuks)", int(totaal) if not pd.isna(totaal) else 0)
 with k2:
-    st.metric("Unieke Orders", active_df["order_nummer"].nunique())
+    st.metric("Unieke Orders", active_df["order_nummer"].nunique() if not active_df.empty else 0)
 
-# --- 8. ZOEKFUNCTIE ---
+# Zoeken
 zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed")
 view_df = df.copy()
 if zoekterm:
     mask = view_df.astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 9. DATA EDITOR ---
+# --- 10. DATA EDITOR ---
 edited_df = st.data_editor(
     view_df,
     column_config={
-        "id": None, # Verberg ID voor de gebruiker
+        "id": None,
         "uit_voorraad": st.column_config.SelectboxColumn("Op Voorraad?", options=["Ja", "Nee"], width="medium"),
         "locatie": st.column_config.SelectboxColumn("📍 Locatie", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.NumberColumn("Aantal", disabled=True),
@@ -141,10 +153,9 @@ edited_df = st.data_editor(
     key="editor"
 )
 
-# --- 10. OPSLAAN LOGICA (Update alleen wijzigingen) ---
+# --- 11. OPSLAAN ---
 if not edited_df.equals(view_df):
     for i in range(len(edited_df)):
-        # Check welke rij specifiek is aangepast
         if not edited_df.iloc[i].equals(view_df.iloc[i]):
             row = edited_df.iloc[i]
             updates = {
@@ -153,6 +164,5 @@ if not edited_df.equals(view_df):
             }
             update_rij(row["id"], updates)
     
-    # Vernieuw de lokale staat en de pagina
     st.session_state.mijn_data = laad_data()
     st.rerun()
