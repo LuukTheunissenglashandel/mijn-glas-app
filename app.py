@@ -12,18 +12,24 @@ LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9
 
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
-# --- 2. CSS: LAYOUT & STYLING ---
+# --- 2. CSS: PERSISTENTIE & HEADER WRAPPING ---
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
 
+    /* Zorg dat de tabel-headers de tekst afbreken (onder elkaar zetten) */
+    [data-testid="stDataEditor"] div[role="columnheader"] p {
+        white-space: normal !important;
+        word-break: break-word !important;
+        line-height: 1.1 !important;
+    }
+
     div.stButton > button { 
         border-radius: 8px; height: 50px; font-weight: 600; border: none; 
     }
     
-    /* Maak checkbox kolom visueel duidelijker */
     [data-testid="stDataEditor"] div {
         line-height: 1.8 !important;
     }
@@ -92,7 +98,11 @@ def sla_data_op(df):
 def clear_search():
     st.session_state.zoek_input = ""
 
-# --- 4. AUTHENTICATIE ---
+# --- 4. AUTHENTICATIE MET REFRESH PERSISTENTIE ---
+# Check of er al een inlog-token in de URL staat
+if "login" in st.query_params and st.query_params["login"] == "success":
+    st.session_state.ingelogd = True
+
 if "ingelogd" not in st.session_state: 
     st.session_state.ingelogd = False
 
@@ -104,6 +114,8 @@ if not st.session_state.ingelogd:
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
+                # Zet token in URL voor behoud bij verversen
+                st.query_params["login"] = "success"
                 st.rerun()
             else: st.error("Fout wachtwoord")
     st.stop()
@@ -134,23 +146,24 @@ with st.sidebar:
             st.rerun()
         except Exception as e: st.error(f"Fout: {e}")
 
-# --- 7. DASHBOARD HEADER & LOGOUT ---
-c_title, c_logout = st.columns([8, 2])
-with c_title: 
+# --- 7. DASHBOARD HEADER & UITLOGGEN ---
+header_col, logout_col = st.columns([8, 2])
+with header_col:
     st.title("🏭 Glas Voorraad")
-with c_logout:
-    st.write("") # Spatiëring
-    if st.button("🔴 Uitloggen", use_container_width=True):
+with logout_col:
+    st.write("") # Uitlijning
+    if st.button("🚪 Uitloggen", use_container_width=True):
         st.session_state.ingelogd = False
+        st.query_params.clear() # Wis URL token
         st.rerun()
 
 # KPI'S
 active_df = df[df["Uit voorraad"] == "Nee"]
-kpi1, kpi2 = st.columns([1, 1])
-with kpi1: 
+c1, c2 = st.columns([1, 1])
+with c1: 
     aantal_num = pd.to_numeric(active_df["Aantal"], errors='coerce').fillna(0)
     st.metric("In Voorraad (stuks)", int(aantal_num.sum()))
-with kpi2: 
+with c2: 
     orders = active_df[active_df["Order"] != ""]["Order"].apply(lambda x: str(x).split('-')[0].strip())
     st.metric("Unieke Orders", orders.nunique())
 
@@ -173,18 +186,17 @@ if st.session_state.get("zoek_input"):
 # Zet checkbox status klaar
 view_df["Uit voorraad_bool"] = view_df["Uit voorraad"] == "Ja"
 
-# NIEUWE VOLGORDE: Uit voorraad melden staat nu VOORAAN
+# KOLOMVOLGORDE: "Uit voorraad melden" (de checkbox) staat nu vooraan
 volgorde = ["Uit voorraad_bool", "Locatie", "Aantal", "Breedte", "Hoogte", "Order", "Omschrijving", "Spouw", "ID", "Uit voorraad"]
 view_df = view_df[volgorde]
 
-# De editor (zonder de zware styling voor maximale snelheid)
 edited_df = st.data_editor(
     view_df,
     column_config={
         "Uit voorraad_bool": st.column_config.CheckboxColumn(
-            "Uit voorraad\nmelden", 
-            help="Vink aan om uit de voorraad te halen",
-            width="medium"
+            "Uit voorraad melden", 
+            width="small",
+            help="Vink aan om dit item als 'uit voorraad' te markeren"
         ),
         "Locatie": st.column_config.SelectboxColumn(
             "📍 Loc", 
@@ -196,7 +208,7 @@ edited_df = st.data_editor(
         "Breedte": st.column_config.TextColumn("Br.", width="small"),
         "Hoogte": st.column_config.TextColumn("Hg.", width="small"),
         "Order": st.column_config.TextColumn("Order", width="medium"),
-        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="large"),
+        "Omschrijving": st.column_config.TextColumn("Omschrijving", width="medium"),
         "Spouw": st.column_config.TextColumn("Sp.", width="small"),
         "ID": None,            
         "Uit voorraad": None   
@@ -210,12 +222,14 @@ edited_df = st.data_editor(
 
 # --- 10. SNELLE OPSLAGLOGICA ---
 if not edited_df.equals(view_df):
-    # Update de boolean naar de tekst-status ("Ja"/"Nee")
+    # Converteer boolean terug naar tekst
     edited_df["Uit voorraad"] = edited_df["Uit voorraad_bool"].apply(lambda x: "Ja" if x else "Nee")
     
-    # Update alleen de gewijzigde rijen in de hoofd-dataframe
-    st.session_state.mijn_data.update(edited_df[["ID", "Locatie", "Uit voorraad"]])
-    sla_data_op(st.session_state.mijn_data)
+    # Update de hoofddataset via ID
+    st.session_state.mijn_data.set_index("ID", inplace=True)
+    edited_df_idx = edited_df.set_index("ID")
+    st.session_state.mijn_data.update(edited_df_idx[["Locatie", "Uit voorraad"]])
+    st.session_state.mijn_data.reset_index(inplace=True)
     
-    # Direct verversen voor een soepele flow
+    sla_data_op(st.session_state.mijn_data)
     st.rerun()
