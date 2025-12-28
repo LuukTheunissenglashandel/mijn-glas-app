@@ -13,38 +13,38 @@ st.markdown("""
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* Actiebox compact maken zonder titel */
+    /* Ruimte reserveren voor de actiebox om verspringen te minimaliseren */
+    .stElementContainer:has(.action-box) {
+        min-height: 340px; 
+    }
+
     .action-box {
         background-color: #f8f9fa;
         border-radius: 10px;
-        padding: 10px;
+        padding: 15px;
         border: 2px solid #007bff;
-        margin-bottom: 10px;
+        margin-bottom: 5px;
     }
     
-    /* Zoekbalk hoogte fix - we targeten de container en het input veld direct */
-    div[data-testid="stTextInput"] {
-        margin-top: 0px;
-    }
-    div[data-testid="stTextInput"] > div > div > input {
-        height: 3.5em !important;
-        border-radius: 8px !important;
-    }
-    
-    /* Knoppen op exact 3.5em hoogte */
+    /* Zoekbalk en Knoppen op gelijke hoogte */
     div.stButton > button { 
         border-radius: 8px; 
         font-weight: 600; 
         height: 3.5em !important; 
-        line-height: 1.2 !important;
     }
     
-    /* Grotere checkboxen voor tablet */
-    [data-testid="stDataEditor"] input[type="checkbox"] { 
-        transform: scale(1.8); 
-        margin: 10px; 
-        cursor: pointer; 
+    /* Fix voor hoogte zoekveld */
+    div[data-testid="stTextInput"] div[data-baseweb="input"] {
+        height: 3.5em !important;
+        display: flex;
+        align-items: center;
     }
+    
+    div[data-testid="stTextInput"] input {
+        height: 3.5em !important;
+    }
+
+    [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
     
     /* Kleuren */
     div.stButton > button[key^="delete_btn"] { background-color: #ff4b4b; color: white; border: none; }
@@ -129,11 +129,12 @@ edited_df = st.data_editor(
     height=500
 )
 
-# --- 9. ACTIEBOX LOGICA (Zonder titel, direct knoppen) ---
+# --- 9. ACTIEBOX LOGICA ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerd.empty:
     with actie_houder:
+        # Titel is hier verwijderd, div container blijft voor styling
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
         
         cb_col1, cb_col2 = st.columns(2)
@@ -149,8 +150,7 @@ if not geselecteerd.empty:
                 get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
                 st.session_state.mijn_data = laad_data(); st.rerun()
 
-        st.write("**Nieuwe locatie:**")
-        # Grid voor locaties
+        st.write("**Kies nieuwe doellocatie:**")
         for i in range(0, len(LOCATIE_OPTIES), 5):
             row_options = LOCATIE_OPTIES[i:i+5]
             grid_cols = st.columns(5)
