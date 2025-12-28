@@ -84,6 +84,8 @@ if 'bulk_loc' not in st.session_state:
     st.session_state.bulk_loc = "HK"
 if 'confirm_delete' not in st.session_state:
     st.session_state.confirm_delete = False
+if 'show_location_grid' not in st.session_state:
+    st.session_state.show_location_grid = False
 
 def reset_zoekopdracht():
     st.session_state.zoek_veld = ""
@@ -104,7 +106,6 @@ with c1:
 with c2: 
     if st.button("ZOEKEN", use_container_width=True): st.rerun()
 with c3: 
-    # Fix: gebruik on_click callback om de error te voorkomen
     st.button("WISSEN", use_container_width=True, on_click=reset_zoekopdracht)
 
 view_df = st.session_state.mijn_data.copy()
@@ -138,15 +139,24 @@ geselecteerd = edited_df[edited_df["Selecteren"] == True]
 if not geselecteerd.empty:
     with actie_houder:
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
-        cb_col1, cb_col2 = st.columns(2)
+        # We maken 3 kolommen: Uitvoeren, Kiezen (nieuw), Verwijderen
+        cb_col1, cb_col2, cb_col3 = st.columns(3)
         
         with cb_col1:
             if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
                 ids = geselecteerd["id"].tolist()
                 get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids).execute()
-                st.session_state.mijn_data = laad_data(); st.rerun()
+                st.session_state.mijn_data = laad_data()
+                st.session_state.show_location_grid = False
+                st.rerun()
                 
         with cb_col2:
+            knop_label = "📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT SELECTIE"
+            if st.button(knop_label, use_container_width=True):
+                st.session_state.show_location_grid = not st.session_state.show_location_grid
+                st.rerun()
+
+        with cb_col3:
             if not st.session_state.confirm_delete:
                 if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
                     st.session_state.confirm_delete = True; st.rerun()
@@ -160,19 +170,23 @@ if not geselecteerd.empty:
                 if c_no.button("ANNULEER", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
-        st.write("**Kies nieuwe doellocatie:**")
-        for i in range(0, len(LOCATIE_OPTIES), 5):
-            row_options = LOCATIE_OPTIES[i:i+5]
-            grid_cols = st.columns(5)
-            for idx, loc_naam in enumerate(row_options):
-                is_active = st.session_state.bulk_loc == loc_naam
-                if grid_cols[idx].button(loc_naam, key=f"grid_{loc_naam}", use_container_width=True, 
-                                       type="primary" if is_active else "secondary"):
-                    st.session_state.bulk_loc = loc_naam
-                    st.rerun()
+        # Toon de grid alleen als er op de knop geklikt is
+        if st.session_state.show_location_grid:
+            st.write("---")
+            st.write("**Kies nieuwe doellocatie:**")
+            for i in range(0, len(LOCATIE_OPTIES), 5):
+                row_options = LOCATIE_OPTIES[i:i+5]
+                grid_cols = st.columns(5)
+                for idx, loc_naam in enumerate(row_options):
+                    is_active = st.session_state.bulk_loc == loc_naam
+                    if grid_cols[idx].button(loc_naam, key=f"grid_{loc_naam}", use_container_width=True, 
+                                           type="primary" if is_active else "secondary"):
+                        st.session_state.bulk_loc = loc_naam
+                        st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.session_state.confirm_delete = False
+    st.session_state.show_location_grid = False
 
 # --- 10. OPSLAAN VAN HANDMATIGE EDITS ---
 if "main_editor" in st.session_state:
