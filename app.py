@@ -13,46 +13,38 @@ st.markdown("""
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* Ruimte reserveren voor de actiebox om verspringen te minimaliseren */
-    .stElementContainer:has(.action-box) {
-        min-height: 340px; 
-    }
-
+    /* Actiebox compact maken zonder titel */
     .action-box {
         background-color: #f8f9fa;
         border-radius: 10px;
-        padding: 15px;
+        padding: 10px;
         border: 2px solid #007bff;
-        margin-bottom: 5px;
+        margin-bottom: 10px;
     }
     
-    /* Titel in de actiebox zonder witruimte eronder */
-    .action-title {
-        margin: 0 0 10px 0 !important;
-        padding: 0 !important;
-        font-size: 1.5rem;
-        font-weight: 700;
+    /* Zoekbalk hoogte fix - we targeten de container en het input veld direct */
+    div[data-testid="stTextInput"] {
+        margin-top: 0px;
+    }
+    div[data-testid="stTextInput"] > div > div > input {
+        height: 3.5em !important;
+        border-radius: 8px !important;
     }
     
-    /* Zoekbalk en Knoppen op gelijke hoogte */
+    /* Knoppen op exact 3.5em hoogte */
     div.stButton > button { 
         border-radius: 8px; 
         font-weight: 600; 
         height: 3.5em !important; 
+        line-height: 1.2 !important;
     }
     
-    /* Fix voor hoogte zoekveld */
-    div[data-testid="stTextInput"] div[data-baseweb="input"] {
-        height: 3.5em !important;
-        display: flex;
-        align-items: center;
+    /* Grotere checkboxen voor tablet */
+    [data-testid="stDataEditor"] input[type="checkbox"] { 
+        transform: scale(1.8); 
+        margin: 10px; 
+        cursor: pointer; 
     }
-    
-    div[data-testid="stTextInput"] input {
-        height: 3.5em !important;
-    }
-
-    [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
     
     /* Kleuren */
     div.stButton > button[key^="delete_btn"] { background-color: #ff4b4b; color: white; border: none; }
@@ -137,14 +129,12 @@ edited_df = st.data_editor(
     height=500
 )
 
-# --- 9. ACTIEBOX LOGICA ---
+# --- 9. ACTIEBOX LOGICA (Zonder titel, direct knoppen) ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerd.empty:
-    totaal_ruiten = int(geselecteerd["aantal"].sum())
     with actie_houder:
-        # Hier gebruiken we de nieuwe CSS class 'action-title' voor minimale witruimte
-        st.markdown(f'<div class="action-box"><p class="action-title">📍 Acties voor {totaal_ruiten} ruiten</p>', unsafe_allow_html=True)
+        st.markdown('<div class="action-box">', unsafe_allow_html=True)
         
         cb_col1, cb_col2 = st.columns(2)
         with cb_col1:
@@ -159,7 +149,8 @@ if not geselecteerd.empty:
                 get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
                 st.session_state.mijn_data = laad_data(); st.rerun()
 
-        st.write("**Kies nieuwe doellocatie:**")
+        st.write("**Nieuwe locatie:**")
+        # Grid voor locaties
         for i in range(0, len(LOCATIE_OPTIES), 5):
             row_options = LOCATIE_OPTIES[i:i+5]
             grid_cols = st.columns(5)
