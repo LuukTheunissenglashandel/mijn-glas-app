@@ -18,25 +18,29 @@ st.markdown("""
         background-color: #f8f9fa;
         border-radius: 10px;
         padding: 15px;
-        border: 1px solid #e0e0e0;
+        border: 2px solid #007bff;
         margin-top: 10px;
         margin-bottom: 20px;
     }
     
-    /* Knoppen en Zoekveld op gelijke hoogte */
+    /* Knoppen en Zoekveld op exact 3.5em hoogte */
     div.stButton > button { 
         border-radius: 8px; 
         font-weight: 600; 
         height: 3.5em !important; 
     }
     
-    /* Forceer hoogte van het zoekveld */
-    div[data-testid="stTextInput"] div[data-baseweb="input"] {
+    /* Zoekveld hoogte aanpassen */
+    div[data-testid="stTextInput"] > div > div > input {
         height: 3.5em !important;
-        line-height: 3.5em;
     }
 
-    [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
+    /* Grotere checkboxen voor tablet */
+    [data-testid="stDataEditor"] input[type="checkbox"] { 
+        transform: scale(1.8); 
+        margin: 10px; 
+        cursor: pointer; 
+    }
     
     /* Kleuren */
     div.stButton > button[key^="delete_btn"] { background-color: #ff4b4b; color: white; border: none; }
@@ -55,7 +59,6 @@ def laad_data():
     if df.empty:
         df = pd.DataFrame(columns=["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"])
     df["Selecteren"] = False
-    # Zorg dat de volgorde van kolommen logisch is voor de editor
     return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
 
 # --- 3. AUTHENTICATIE ---
@@ -72,7 +75,7 @@ if not st.session_state.ingelogd:
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
     st.stop()
 
-# --- 4. INITIALISATIE ---
+# --- 4. DATA LADEN ---
 if 'mijn_data' not in st.session_state: 
     st.session_state.mijn_data = laad_data()
 if 'bulk_loc' not in st.session_state:
@@ -101,7 +104,11 @@ if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 7. TABEL (Eerst definiëren om selectie te vangen) ---
+# --- 7. PLACEHOLDER VOOR ACTIES ---
+# Deze plek reserveren we boven de tabel
+actie_houder = st.empty()
+
+# --- 8. TABEL ---
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -113,51 +120,46 @@ edited_df = st.data_editor(
     hide_index=True, use_container_width=True, key="main_editor", height=500
 )
 
-# --- 8. ACTIESECTIE (Verschijnt boven de tabel indien geselecteerd) ---
+# --- 9. LOGICA VOOR ACTIEBOX (Vullen van de placeholder) ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerd.empty:
     totaal_ruiten = int(geselecteerd["aantal"].sum())
-    # We gebruiken st.sidebar of een container die we bovenaan plaatsen via een placeholder
-    # Maar voor de simpelste UI fix zetten we hem hier in een duidelijke box:
-    st.markdown(f'''
-        <div class="action-box">
-            <h3 style="margin-top:0;">📍 Acties voor {totaal_ruiten} ruiten</h3>
-        </div>
-    ''', unsafe_allow_html=True)
-    
-    col_btn_move, col_btn_del = st.columns(2)
-    with col_btn_move:
-        if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
-            ids_to_update = geselecteerd["id"].tolist()
-            get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids_to_update).execute()
-            st.session_state.mijn_data = laad_data(); st.rerun()
-            
-    with col_btn_del:
-        if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
-            ids_to_delete = geselecteerd["id"].tolist()
-            get_supabase().table("glas_voorraad").delete().in_("id", ids_to_delete).execute()
-            st.session_state.mijn_data = laad_data(); st.rerun()
+    with actie_houder.container():
+        st.markdown(f'<div class="action-box"><h3>📍 Acties voor {totaal_ruiten} ruiten</h3>', unsafe_allow_html=True)
+        
+        col_btn_move, col_btn_del = st.columns(2)
+        with col_btn_move:
+            if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
+                ids = geselecteerd["id"].tolist()
+                get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids).execute()
+                st.session_state.mijn_data = laad_data(); st.rerun()
+                
+        with col_btn_del:
+            if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
+                ids = geselecteerd["id"].tolist()
+                get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
+                st.session_state.mijn_data = laad_data(); st.rerun()
 
-    st.write("**Kies nieuwe doellocatie:**")
-    # Grid voor locaties
-    for i in range(0, len(LOCATIE_OPTIES), 5):
-        row_options = LOCATIE_OPTIES[i:i+5]
-        grid_cols = st.columns(5)
-        for idx, loc_naam in enumerate(row_options):
-            if grid_cols[idx].button(loc_naam, key=f"grid_{loc_naam}", use_container_width=True, 
-                                   type="primary" if st.session_state.bulk_loc == loc_naam else "secondary"):
-                st.session_state.bulk_loc = loc_naam
-                st.rerun()
-    st.divider()
+        st.write("**Kies nieuwe doellocatie:**")
+        # Grid voor locaties (5 per rij)
+        for i in range(0, len(LOCATIE_OPTIES), 5):
+            row_options = LOCATIE_OPTIES[i:i+5]
+            grid_cols = st.columns(5)
+            for idx, loc_naam in enumerate(row_options):
+                is_active = st.session_state.bulk_loc == loc_naam
+                if grid_cols[idx].button(loc_naam, key=f"grid_{loc_naam}", use_container_width=True, 
+                                       type="primary" if is_active else "secondary"):
+                    st.session_state.bulk_loc = loc_naam
+                    st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 9. OPSLAAN VAN HANDMATIGE EDITS ---
+# --- 10. OPSLAAN VAN HANDMATIGE EDITS ---
 if "main_editor" in st.session_state:
     edits = st.session_state["main_editor"].get("edited_rows", {})
     if edits:
         updates_made = False
         for row_idx, changes in edits.items():
-            # Alleen opslaan als er daadwerkelijk data (niet de checkbox) is veranderd
             inhoud_wijziging = {k: v for k, v in changes.items() if k != "Selecteren"}
             if inhoud_wijziging:
                 row_id = view_df.iloc[int(row_idx)]["id"]
@@ -166,7 +168,8 @@ if "main_editor" in st.session_state:
         if updates_made:
             st.session_state.mijn_data = laad_data(); st.rerun()
 
-# --- 10. BEHEER SECTIE (Excel & Handmatig) ---
+# --- 11. BEHEER SECTIE (Onderaan) ---
+st.divider()
 st.subheader("⚙️ Beheer & Toevoegen")
 exp_col1, exp_col2 = st.columns(2)
 
