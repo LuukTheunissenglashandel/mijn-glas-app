@@ -20,6 +20,12 @@ st.markdown("""
         height: 3em;
     }
     
+    /* Vergroot de checkboxen in de tabel voor tabletgebruik */
+    [data-testid="stTableEditor"] input[type="checkbox"] {
+        transform: scale(1.5);
+        cursor: pointer;
+    }
+    
     /* Specifieke kleur voor de rode knoppen */
     div.stButton > button[key^="delete_btn"], 
     div.stButton > button[key^="confirm_delete"],
@@ -77,7 +83,7 @@ col_titel, col_logout = st.columns([0.85, 0.15])
 with col_titel:
     st.title("🏭 Glas Voorraad Dashboard")
 with col_logout:
-    st.markdown("<br>", unsafe_allow_html=True) # Voor uitlijning met titel
+    st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False
         st.query_params.clear()
@@ -89,16 +95,17 @@ if "zoek_query" not in st.session_state:
 
 c1, c2, c3 = st.columns([6, 1, 1])
 with c1:
-    # Door de waarde direct aan session_state te koppelen werkt ENTER automatisch
-    zoekterm_input = st.text_input("Zoeken", value=st.session_state.zoek_query, placeholder="🔍 Zoek op order, maat of omschrijving... (Druk op Enter)", label_visibility="collapsed")
-    st.session_state.zoek_query = zoekterm_input # Update state direct
+    # Gebruik van een key voor automatische syncing en wissen
+    zoekterm_input = st.text_input("Zoeken", value=st.session_state.zoek_query, placeholder="🔍 Zoek op order, maat of glastype... (Druk op Enter)", label_visibility="collapsed", key="zoek_veld")
+    st.session_state.zoek_query = zoekterm_input
 
 with c2:
     if st.button("ZOEKEN", use_container_width=True):
-        st.rerun() # Enter doet dit al, button forceert het ook
+        st.rerun()
 with c3:
     if st.button("WISSEN", use_container_width=True):
         st.session_state.zoek_query = ""
+        st.session_state.zoek_veld = "" # Wis ook de widget state
         st.rerun()
 
 view_df = df.copy()
@@ -112,12 +119,14 @@ actie_placeholder = st.empty()
 edited_df = st.data_editor(
     view_df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]],
     column_config={
-        "Selecteren": st.column_config.CheckboxColumn("Kies", width="small"),
+        "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"),
         "id": None,
         "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.NumberColumn("Aant.", width="small"),
         "breedte": st.column_config.NumberColumn("Br.", width="small"),
         "hoogte": st.column_config.NumberColumn("Hg.", width="small"),
+        "order_nummer": st.column_config.TextColumn("Order"),
+        "omschrijving": st.column_config.TextColumn("Glastype"),
     },
     hide_index=True, use_container_width=True, key="editor", height=500
 )
@@ -160,7 +169,7 @@ with exp_col1:
             n_aantal = st.number_input("Aantal", min_value=1, value=1)
             n_br = st.number_input("Breedte (mm)", min_value=0)
             n_hg = st.number_input("Hoogte (mm)", min_value=0)
-            n_oms = st.text_input("Omschrijving")
+            n_oms = st.text_input("Glastype (Omschrijving)")
             if st.form_submit_button("VOEG TOE", use_container_width=True):
                 if n_order:
                     nieuwe_data = {"locatie": n_loc, "order_nummer": n_order, "aantal": n_aantal, "breedte": n_br, "hoogte": n_hg, "omschrijving": n_oms, "uit_voorraad": "Nee"}
@@ -175,6 +184,7 @@ with exp_col2:
             try:
                 raw = pd.read_excel(uploaded_file)
                 raw.columns = [str(c).strip().lower() for c in raw.columns]
+                # Mapping blijft hetzelfde voor database compatibiliteit
                 mapping = {"locatie": "locatie", "aantal": "aantal", "breedte": "breedte", "hoogte": "hoogte", "order": "order_nummer", "omschrijving": "omschrijving"}
                 raw = raw.rename(columns=mapping)
                 import_df = raw.dropna(subset=["order_nummer"])
@@ -184,7 +194,6 @@ with exp_col2:
                 st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
 
-# Ververs knop onderaan
 if st.button("🔄 DATA VERVERSEN", use_container_width=True):
     st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
 
