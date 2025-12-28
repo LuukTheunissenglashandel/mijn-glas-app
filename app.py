@@ -13,34 +13,38 @@ st.markdown("""
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* Actiebox styling */
+    /* Ruimte reserveren voor de actiebox om verspringen te minimaliseren */
+    .stElementContainer:has(.action-box) {
+        min-height: 380px; 
+    }
+
     .action-box {
         background-color: #f8f9fa;
         border-radius: 10px;
-        padding: 15px;
+        padding: 20px;
         border: 2px solid #007bff;
-        margin-top: 10px;
-        margin-bottom: 20px;
+        margin-bottom: 10px;
     }
     
-    /* Knoppen en Zoekveld op exact 3.5em hoogte */
+    /* Zoekbalk en Knoppen op gelijke hoogte */
     div.stButton > button { 
         border-radius: 8px; 
         font-weight: 600; 
         height: 3.5em !important; 
     }
     
-    /* Zoekveld hoogte aanpassen */
-    div[data-testid="stTextInput"] > div > div > input {
+    /* Fix voor hoogte zoekveld */
+    div[data-testid="stTextInput"] div[data-baseweb="input"] {
+        height: 3.5em !important;
+        display: flex;
+        align-items: center;
+    }
+    
+    div[data-testid="stTextInput"] input {
         height: 3.5em !important;
     }
 
-    /* Grotere checkboxen voor tablet */
-    [data-testid="stDataEditor"] input[type="checkbox"] { 
-        transform: scale(1.8); 
-        margin: 10px; 
-        cursor: pointer; 
-    }
+    [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
     
     /* Kleuren */
     div.stButton > button[key^="delete_btn"] { background-color: #ff4b4b; color: white; border: none; }
@@ -75,7 +79,7 @@ if not st.session_state.ingelogd:
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
     st.stop()
 
-# --- 4. DATA LADEN ---
+# --- 4. INITIALISATIE ---
 if 'mijn_data' not in st.session_state: 
     st.session_state.mijn_data = laad_data()
 if 'bulk_loc' not in st.session_state:
@@ -92,7 +96,8 @@ with col_logout:
 
 # --- 6. ZOEKFUNCTIE ---
 c1, c2, c3 = st.columns([6, 1, 1])
-with c1: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
+with c1: 
+    zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
 with c2: 
     if st.button("ZOEKEN", use_container_width=True): st.rerun()
 with c3: 
@@ -104,45 +109,48 @@ if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 7. PLACEHOLDER VOOR ACTIES ---
-# Deze plek reserveren we boven de tabel
-actie_houder = st.empty()
+# --- 7. STABIELE ACTIEHOUDER ---
+actie_houder = st.container()
 
-# --- 8. TABEL ---
+# --- 8. TABEL (Met aangepaste kolomtitels) ---
 edited_df = st.data_editor(
     view_df,
     column_config={
-        "Selecteren": st.column_config.CheckboxColumn("Vink aan", width="small"),
+        "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"),
         "id": None,
         "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.NumberColumn("Aant.", width="small"),
+        "order_nummer": st.column_config.TextColumn("Order"),
+        "omschrijving": st.column_config.TextColumn("Glas type"),
     },
-    hide_index=True, use_container_width=True, key="main_editor", height=500
+    hide_index=True, 
+    use_container_width=True, 
+    key="main_editor", 
+    height=500
 )
 
-# --- 9. LOGICA VOOR ACTIEBOX (Vullen van de placeholder) ---
+# --- 9. ACTIEBOX LOGICA ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerd.empty:
     totaal_ruiten = int(geselecteerd["aantal"].sum())
-    with actie_houder.container():
+    with actie_houder:
         st.markdown(f'<div class="action-box"><h3>📍 Acties voor {totaal_ruiten} ruiten</h3>', unsafe_allow_html=True)
         
-        col_btn_move, col_btn_del = st.columns(2)
-        with col_btn_move:
+        cb_col1, cb_col2 = st.columns(2)
+        with cb_col1:
             if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
                 ids = geselecteerd["id"].tolist()
                 get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids).execute()
                 st.session_state.mijn_data = laad_data(); st.rerun()
                 
-        with col_btn_del:
+        with cb_col2:
             if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
                 ids = geselecteerd["id"].tolist()
                 get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
                 st.session_state.mijn_data = laad_data(); st.rerun()
 
         st.write("**Kies nieuwe doellocatie:**")
-        # Grid voor locaties (5 per rij)
         for i in range(0, len(LOCATIE_OPTIES), 5):
             row_options = LOCATIE_OPTIES[i:i+5]
             grid_cols = st.columns(5)
@@ -168,7 +176,7 @@ if "main_editor" in st.session_state:
         if updates_made:
             st.session_state.mijn_data = laad_data(); st.rerun()
 
-# --- 11. BEHEER SECTIE (Onderaan) ---
+# --- 11. BEHEER SECTIE ---
 st.divider()
 st.subheader("⚙️ Beheer & Toevoegen")
 exp_col1, exp_col2 = st.columns(2)
@@ -181,7 +189,7 @@ with exp_col1:
             f_aan = st.number_input("Aantal", min_value=1, value=1)
             f_br = st.number_input("Breedte", value=0)
             f_hg = st.number_input("Hoogte", value=0)
-            f_oms = st.text_input("Glastype")
+            f_oms = st.text_input("Glas type")
             if st.form_submit_button("VOEG TOE", use_container_width=True):
                 get_supabase().table("glas_voorraad").insert({"locatie": f_loc, "order_nummer": f_ord, "aantal": f_aan, "breedte": f_br, "hoogte": f_hg, "omschrijving": f_oms, "uit_voorraad": "Nee"}).execute()
                 st.session_state.mijn_data = laad_data(); st.rerun()
@@ -193,6 +201,7 @@ with exp_col2:
             try:
                 raw = pd.read_excel(uploaded_file)
                 raw.columns = [str(c).strip().lower() for c in raw.columns]
+                # Mapping blijft hetzelfde: we mappen de Excel kolommen naar de database namen
                 mapping = {"locatie": "locatie", "aantal": "aantal", "breedte": "breedte", "hoogte": "hoogte", "order": "order_nummer", "omschrijving": "omschrijving"}
                 raw = raw.rename(columns=mapping)
                 import_df = raw.dropna(subset=["order_nummer"])
