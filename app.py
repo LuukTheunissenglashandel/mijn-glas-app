@@ -6,7 +6,7 @@ from supabase import create_client, Client
 # Hier stellen we de titel en het .webp logo als favicon in
 st.set_page_config(
     layout="wide", 
-    page_title="Theunissen Glashandel - Voorraad glas",
+    page_title="Voorraad glas",
     page_icon="theunissen.webp"
 )
 
@@ -70,7 +70,7 @@ if "ingelogd" not in st.session_state:
 if not st.session_state.ingelogd:
     _, col2, _ = st.columns([1,2,1])
     with col2:
-        st.markdown("<h2 style='text-align: center;'>Theunissen Glashandel - Voorraad glas</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>Voorraad glas</h2>", unsafe_allow_html=True)
         ww = st.text_input("Wachtwoord", type="password")
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
@@ -96,7 +96,7 @@ with col_logo:
     st.image("theunissen.webp", use_container_width=True)
 
 with col_titel:
-    st.title("Theunissen Glashandel - Voorraad glas")
+    st.title("Voorraad glas")
 
 with col_logout:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -218,3 +218,4 @@ if not edited_df.drop(columns=["Selecteren"]).equals(view_df[["locatie", "aantal
             update_data = {"locatie": str(curr_row["locatie"]), "aantal": int(curr_row["aantal"]), "breedte": int(curr_row["breedte"]), "hoogte": int(curr_row["hoogte"]), "omschrijving": str(curr_row["omschrijving"]), "order_nummer": str(curr_row["order_nummer"])}
             get_supabase().table("glas_voorraad").update(update_data).eq("id", curr_row["id"]).execute()
     st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
+
