@@ -72,19 +72,30 @@ if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
 df = st.session_state.mijn_data
 
-# --- 5. DASHBOARD TITEL & ZOEKEN ---
-st.title("🏭 Glas Voorraad Dashboard")
+# --- 5. DASHBOARD HEADER (Titel + Uitloggen rechtsboven) ---
+col_titel, col_logout = st.columns([0.85, 0.15])
+with col_titel:
+    st.title("🏭 Glas Voorraad Dashboard")
+with col_logout:
+    st.markdown("<br>", unsafe_allow_html=True) # Voor uitlijning met titel
+    if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
+        st.session_state.ingelogd = False
+        st.query_params.clear()
+        st.rerun()
 
+# --- 6. ZOEKFUNCTIE ---
 if "zoek_query" not in st.session_state:
     st.session_state.zoek_query = ""
 
 c1, c2, c3 = st.columns([6, 1, 1])
 with c1:
-    zoekterm_input = st.text_input("Zoeken", value=st.session_state.zoek_query, placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed")
+    # Door de waarde direct aan session_state te koppelen werkt ENTER automatisch
+    zoekterm_input = st.text_input("Zoeken", value=st.session_state.zoek_query, placeholder="🔍 Zoek op order, maat of omschrijving... (Druk op Enter)", label_visibility="collapsed")
+    st.session_state.zoek_query = zoekterm_input # Update state direct
+
 with c2:
     if st.button("ZOEKEN", use_container_width=True):
-        st.session_state.zoek_query = zoekterm_input
-        st.rerun()
+        st.rerun() # Enter doet dit al, button forceert het ook
 with c3:
     if st.button("WISSEN", use_container_width=True):
         st.session_state.zoek_query = ""
@@ -97,7 +108,7 @@ if st.session_state.zoek_query:
 
 actie_placeholder = st.empty()
 
-# --- 6. TABEL ---
+# --- 7. TABEL ---
 edited_df = st.data_editor(
     view_df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]],
     column_config={
@@ -111,7 +122,7 @@ edited_df = st.data_editor(
     hide_index=True, use_container_width=True, key="editor", height=500
 )
 
-# --- 7. ACTIEBALK (Verplaatsen / Verwijderen) ---
+# --- 8. ACTIEBALK (Verplaatsen / Verwijderen) ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 if not geselecteerd.empty:
     with actie_placeholder.container(border=True):
@@ -136,7 +147,7 @@ if not geselecteerd.empty:
                 if c_no.button("ANNULEER", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
-# --- 8. BEHEER SECTIE (Onder de tabel) ---
+# --- 9. BEHEER SECTIE (Onder de tabel) ---
 st.divider()
 st.subheader("⚙️ Beheer & Toevoegen")
 exp_col1, exp_col2 = st.columns(2)
@@ -173,18 +184,11 @@ with exp_col2:
                 st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
 
-# Knoppen voor Verversen en Uitloggen onderaan
-footer_col1, footer_col2, footer_col3 = st.columns([2, 4, 2])
-with footer_col1:
-    if st.button("🔄 DATA VERVERSEN", use_container_width=True):
-        st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
-with footer_col3:
-    if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
-        st.session_state.ingelogd = False
-        st.query_params.clear()
-        st.rerun()
+# Ververs knop onderaan
+if st.button("🔄 DATA VERVERSEN", use_container_width=True):
+    st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
 
-# --- 9. HANDMATIGE WIJZIGINGEN OPSLAAN ---
+# --- 10. HANDMATIGE WIJZIGINGEN OPSLAAN ---
 if not edited_df.drop(columns=["Selecteren"]).equals(view_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]):
     for i in range(len(edited_df)):
         orig_row = view_df[view_df["id"] == edited_df.iloc[i]["id"]].iloc[0]
