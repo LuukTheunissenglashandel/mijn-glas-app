@@ -3,7 +3,8 @@ import pandas as pd
 from supabase import create_client, Client
 
 # --- 1. CONFIGURATIE & STYLING ---
-st.set_page_config(layout="wide", page_title="Glas Voorraad")
+# initial_sidebar_state zorgt dat hij bij opstarten netjes openstaat
+st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
 WACHTWOORD = "glas123"
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
@@ -11,7 +12,16 @@ LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9
 st.markdown("""
     <style>
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
-    #MainMenu, footer, header {visibility: hidden;}
+    
+    /* Verberg menu en footer */
+    #MainMenu, footer {visibility: hidden;}
+    
+    /* Verberg de header balk, maar laat de sidebar-knop (pijltje) WEL zien */
+    header {visibility: hidden;}
+    button[data-testid="stSidebarCollapseButton"] {
+        visibility: visible !important;
+        color: #ff4b4b; /* Optioneel: kleurtje zodat hij opvalt */
+    }
     
     /* Maak alle knoppen consistent */
     div.stButton > button {
@@ -47,7 +57,6 @@ def laad_data():
     return df
 
 # --- 3. AUTHENTICATIE LOGICA ---
-# Check of er een login-marker in de URL staat of in de sessie
 if "ingelogd" not in st.session_state:
     if st.query_params.get("auth") == "true":
         st.session_state.ingelogd = True
@@ -62,7 +71,7 @@ if not st.session_state.ingelogd:
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
-                st.query_params["auth"] = "true"  # Zet marker in URL
+                st.query_params["auth"] = "true" 
                 st.rerun()
             else:
                 st.error("Onjuist wachtwoord")
@@ -116,17 +125,15 @@ with st.sidebar:
     if st.button("🔄 VERVERSEN", use_container_width=True):
         st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
     
-    # --- UITLOG KNOP ---
-    st.sidebar.markdown("<br>" * 10, unsafe_allow_html=True) # Ruimte onderaan
+    st.sidebar.markdown("<br>" * 5, unsafe_allow_html=True)
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False
-        st.query_params.clear() # Verwijder marker uit URL
+        st.query_params.clear()
         st.rerun()
 
 # --- 6. DASHBOARD ---
 st.title("🏭 Glas Voorraad Dashboard")
 
-# Zoeksectie met knoppen
 if "zoek_query" not in st.session_state:
     st.session_state.zoek_query = ""
 
@@ -169,22 +176,17 @@ geselecteerd = edited_df[edited_df["Selecteren"] == True]
 if not geselecteerd.empty:
     with actie_placeholder.container(border=True):
         col_info, col_sel, col_b1, col_b2 = st.columns([1.5, 1.5, 2.5, 2.5], vertical_alignment="center")
-        
         with col_info:
             st.markdown(f"**{len(geselecteerd)} items gekozen**")
-            
         with col_sel:
             nieuwe_loc = st.selectbox("Naar:", LOCATIE_OPTIES, key="bulk_loc")
-            
         with col_b1:
             if st.button(f"📍 VERPLAATS NAAR {nieuwe_loc}", type="primary", use_container_width=True):
                 get_supabase().table("glas_voorraad").update({"locatie": nieuwe_loc}).in_("id", geselecteerd["id"].tolist()).execute()
                 st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
-                
         with col_b2:
             if f"confirm_delete" not in st.session_state:
                 st.session_state.confirm_delete = False
-
             if not st.session_state.confirm_delete:
                 if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
                     st.session_state.confirm_delete = True
@@ -205,16 +207,11 @@ if not edited_df.drop(columns=["Selecteren"]).equals(view_df[["locatie", "aantal
     for i in range(len(edited_df)):
         orig_row = view_df[view_df["id"] == edited_df.iloc[i]["id"]].iloc[0]
         curr_row = edited_df.iloc[i]
-        
         if not curr_row.drop("Selecteren").equals(orig_row[curr_row.drop("Selecteren").index]):
             update_data = {
-                "locatie": str(curr_row["locatie"]),
-                "aantal": int(curr_row["aantal"]),
-                "breedte": int(curr_row["breedte"]),
-                "hoogte": int(curr_row["hoogte"]),
-                "omschrijving": str(curr_row["omschrijving"]),
-                "order_nummer": str(curr_row["order_nummer"])
+                "locatie": str(curr_row["locatie"]), "aantal": int(curr_row["aantal"]),
+                "breedte": int(curr_row["breedte"]), "hoogte": int(curr_row["hoogte"]),
+                "omschrijving": str(curr_row["omschrijving"]), "order_nummer": str(curr_row["order_nummer"])
             }
             get_supabase().table("glas_voorraad").update(update_data).eq("id", curr_row["id"]).execute()
-    
     st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
