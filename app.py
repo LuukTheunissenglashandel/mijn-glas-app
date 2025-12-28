@@ -20,8 +20,10 @@ st.markdown("""
         height: 3em;
     }
     
-    /* Specifieke kleur voor de Meegenomen knop (Rood) */
-    div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete"] {
+    /* Specifieke kleur voor de Meegenomen knop (Rood) en Uitloggen */
+    div.stButton > button[key^="delete_btn"], 
+    div.stButton > button[key^="confirm_delete"],
+    div.stButton > button[key="logout_btn"] {
         background-color: #ff4b4b;
         color: white;
     }
@@ -44,22 +46,34 @@ def laad_data():
     df["Selecteren"] = False
     return df
 
-# --- 3. AUTHENTICATIE ---
-if "ingelogd" not in st.session_state: st.session_state.ingelogd = False
+# --- 3. AUTHENTICATIE LOGICA ---
+# Check of er een login-marker in de URL staat of in de sessie
+if "ingelogd" not in st.session_state:
+    if st.query_params.get("auth") == "true":
+        st.session_state.ingelogd = True
+    else:
+        st.session_state.ingelogd = False
+
 if not st.session_state.ingelogd:
     _, col2, _ = st.columns([1,2,1])
     with col2:
         st.markdown("<h2 style='text-align: center;'>🔒 Glas Voorraad</h2>", unsafe_allow_html=True)
         ww = st.text_input("Wachtwoord", type="password")
         if st.button("Inloggen", use_container_width=True):
-            if ww == WACHTWOORD: st.session_state.ingelogd = True; st.rerun()
+            if ww == WACHTWOORD:
+                st.session_state.ingelogd = True
+                st.query_params["auth"] = "true"  # Zet marker in URL
+                st.rerun()
+            else:
+                st.error("Onjuist wachtwoord")
     st.stop()
 
 # --- 4. DATA LADEN ---
-if 'mijn_data' not in st.session_state: st.session_state.mijn_data = laad_data()
+if 'mijn_data' not in st.session_state: 
+    st.session_state.mijn_data = laad_data()
 df = st.session_state.mijn_data
 
-# --- 5. SIDEBAR (Import & Handmatig toevoegen) ---
+# --- 5. SIDEBAR (Import, Toevoegen & Uitloggen) ---
 with st.sidebar:
     st.subheader("➕ Nieuwe Ruit Toevoegen")
     with st.expander("Ruit toevoegen ➕", expanded=False):
@@ -101,20 +115,41 @@ with st.sidebar:
     st.divider()
     if st.button("🔄 VERVERSEN", use_container_width=True):
         st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
+    
+    # --- UITLOG KNOP ---
+    st.sidebar.markdown("<br>" * 10, unsafe_allow_html=True) # Ruimte onderaan
+    if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
+        st.session_state.ingelogd = False
+        st.query_params.clear() # Verwijder marker uit URL
+        st.rerun()
 
 # --- 6. DASHBOARD ---
 st.title("🏭 Glas Voorraad Dashboard")
 
-zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed")
+# Zoeksectie met knoppen
+if "zoek_query" not in st.session_state:
+    st.session_state.zoek_query = ""
+
+c1, c2, c3 = st.columns([6, 1, 1])
+with c1:
+    zoekterm_input = st.text_input("Zoeken", value=st.session_state.zoek_query, placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed")
+with c2:
+    if st.button("ZOEKEN", use_container_width=True):
+        st.session_state.zoek_query = zoekterm_input
+        st.rerun()
+with c3:
+    if st.button("WISSEN", use_container_width=True):
+        st.session_state.zoek_query = ""
+        st.rerun()
+
 actie_placeholder = st.empty()
 
 view_df = df.copy()
-if zoekterm:
-    mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
+if st.session_state.zoek_query:
+    mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_query, case=False)).any(axis=1)
     view_df = view_df[mask]
 
 # --- 7. TABEL ---
-# Hoogte is aangepast naar 600 voor een betere weergave
 edited_df = st.data_editor(
     view_df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]],
     column_config={
@@ -147,7 +182,6 @@ if not geselecteerd.empty:
                 st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
                 
         with col_b2:
-            # Dubbelcheck logica
             if f"confirm_delete" not in st.session_state:
                 st.session_state.confirm_delete = False
 
@@ -167,14 +201,11 @@ if not geselecteerd.empty:
                     st.rerun()
 
 # --- 9. HANDMATIGE LOCATIE OF DATA WIJZIGING ---
-# Controleer of er iets gewijzigd is in de editor buiten de checkbox om
 if not edited_df.drop(columns=["Selecteren"]).equals(view_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]):
-    # We lopen door de rijen om te zien wat er is aangepast (vereenvoudigd voor deze context)
     for i in range(len(edited_df)):
         orig_row = view_df[view_df["id"] == edited_df.iloc[i]["id"]].iloc[0]
         curr_row = edited_df.iloc[i]
         
-        # Als er een verschil is, update de database
         if not curr_row.drop("Selecteren").equals(orig_row[curr_row.drop("Selecteren").index]):
             update_data = {
                 "locatie": str(curr_row["locatie"]),
