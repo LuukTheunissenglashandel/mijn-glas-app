@@ -15,15 +15,23 @@ st.markdown("""
     
     /* Ruimte reserveren voor de actiebox om verspringen te minimaliseren */
     .stElementContainer:has(.action-box) {
-        min-height: 380px; 
+        min-height: 340px; 
     }
 
     .action-box {
         background-color: #f8f9fa;
         border-radius: 10px;
-        padding: 20px;
+        padding: 15px;
         border: 2px solid #007bff;
-        margin-bottom: 10px;
+        margin-bottom: 5px;
+    }
+    
+    /* Titel in de actiebox zonder witruimte eronder */
+    .action-title {
+        margin: 0 0 10px 0 !important;
+        padding: 0 !important;
+        font-size: 1.5rem;
+        font-weight: 700;
     }
     
     /* Zoekbalk en Knoppen op gelijke hoogte */
@@ -112,7 +120,7 @@ if zoekterm:
 # --- 7. STABIELE ACTIEHOUDER ---
 actie_houder = st.container()
 
-# --- 8. TABEL (Met aangepaste kolomtitels) ---
+# --- 8. TABEL ---
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -135,7 +143,8 @@ geselecteerd = edited_df[edited_df["Selecteren"] == True]
 if not geselecteerd.empty:
     totaal_ruiten = int(geselecteerd["aantal"].sum())
     with actie_houder:
-        st.markdown(f'<div class="action-box"><h3>📍 Acties voor {totaal_ruiten} ruiten</h3>', unsafe_allow_html=True)
+        # Hier gebruiken we de nieuwe CSS class 'action-title' voor minimale witruimte
+        st.markdown(f'<div class="action-box"><p class="action-title">📍 Acties voor {totaal_ruiten} ruiten</p>', unsafe_allow_html=True)
         
         cb_col1, cb_col2 = st.columns(2)
         with cb_col1:
@@ -201,7 +210,6 @@ with exp_col2:
             try:
                 raw = pd.read_excel(uploaded_file)
                 raw.columns = [str(c).strip().lower() for c in raw.columns]
-                # Mapping blijft hetzelfde: we mappen de Excel kolommen naar de database namen
                 mapping = {"locatie": "locatie", "aantal": "aantal", "breedte": "breedte", "hoogte": "hoogte", "order": "order_nummer", "omschrijving": "omschrijving"}
                 raw = raw.rename(columns=mapping)
                 import_df = raw.dropna(subset=["order_nummer"])
