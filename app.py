@@ -3,7 +3,6 @@ import pandas as pd
 from supabase import create_client, Client
 
 # --- 1. CONFIGURATIE & STYLING ---
-# initial_sidebar_state zorgt dat hij bij opstarten netjes openstaat
 st.set_page_config(layout="wide", page_title="Glas Voorraad", initial_sidebar_state="expanded")
 
 WACHTWOORD = "glas123"
@@ -11,18 +10,28 @@ LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9
 
 st.markdown("""
     <style>
-    .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
+    .block-container { padding-top: 3rem; padding-bottom: 5rem; }
     
-    /* Verberg menu en footer */
+    /* Verberg standaard menu en footer */
     #MainMenu, footer {visibility: hidden;}
     
-    /* Verberg de header balk, maar laat de sidebar-knop (pijltje) WEL zien */
-    header {visibility: hidden;}
+    /* Verberg de header maar maak de sidebar-knop zichtbaar als een zwevende knop */
+    header { visibility: hidden !important; }
+    
     button[data-testid="stSidebarCollapseButton"] {
         visibility: visible !important;
-        color: #ff4b4b; /* Optioneel: kleurtje zodat hij opvalt */
+        position: fixed;
+        top: 15px;
+        left: 15px;
+        background-color: #ff4b4b !important;
+        color: white !important;
+        border-radius: 8px !important;
+        z-index: 99999;
+        box-shadow: 0px 2px 5px rgba(0,0,0,0.2);
+        width: 45px;
+        height: 45px;
     }
-    
+
     /* Maak alle knoppen consistent */
     div.stButton > button {
         border-radius: 8px;
@@ -30,7 +39,7 @@ st.markdown("""
         height: 3em;
     }
     
-    /* Specifieke kleur voor de Meegenomen knop (Rood) en Uitloggen */
+    /* Specifieke kleur voor de rode knoppen */
     div.stButton > button[key^="delete_btn"], 
     div.stButton > button[key^="confirm_delete"],
     div.stButton > button[key="logout_btn"] {
@@ -56,8 +65,9 @@ def laad_data():
     df["Selecteren"] = False
     return df
 
-# --- 3. AUTHENTICATIE LOGICA ---
+# --- 3. AUTHENTICATIE (Blijf ingelogd via URL) ---
 if "ingelogd" not in st.session_state:
+    # Check of de 'auth' marker in de URL staat
     if st.query_params.get("auth") == "true":
         st.session_state.ingelogd = True
     else:
@@ -71,7 +81,7 @@ if not st.session_state.ingelogd:
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True
-                st.query_params["auth"] = "true" 
+                st.query_params["auth"] = "true" # Voeg marker toe aan URL
                 st.rerun()
             else:
                 st.error("Onjuist wachtwoord")
@@ -82,7 +92,7 @@ if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
 df = st.session_state.mijn_data
 
-# --- 5. SIDEBAR (Import, Toevoegen & Uitloggen) ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     st.subheader("➕ Nieuwe Ruit Toevoegen")
     with st.expander("Ruit toevoegen ➕", expanded=False):
@@ -131,12 +141,13 @@ with st.sidebar:
         st.query_params.clear()
         st.rerun()
 
-# --- 6. DASHBOARD ---
+# --- 6. DASHBOARD & ZOEKFUNCTIE ---
 st.title("🏭 Glas Voorraad Dashboard")
 
 if "zoek_query" not in st.session_state:
     st.session_state.zoek_query = ""
 
+# Zoekveld met buttons
 c1, c2, c3 = st.columns([6, 1, 1])
 with c1:
     zoekterm_input = st.text_input("Zoeken", value=st.session_state.zoek_query, placeholder="🔍 Zoek op order, maat of omschrijving...", label_visibility="collapsed")
@@ -149,12 +160,12 @@ with c3:
         st.session_state.zoek_query = ""
         st.rerun()
 
-actie_placeholder = st.empty()
-
 view_df = df.copy()
 if st.session_state.zoek_query:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_query, case=False)).any(axis=1)
     view_df = view_df[mask]
+
+actie_placeholder = st.empty()
 
 # --- 7. TABEL ---
 edited_df = st.data_editor(
@@ -202,7 +213,7 @@ if not geselecteerd.empty:
                     st.session_state.confirm_delete = False
                     st.rerun()
 
-# --- 9. HANDMATIGE LOCATIE OF DATA WIJZIGING ---
+# --- 9. HANDMATIGE WIJZIGINGEN OPSLAAN ---
 if not edited_df.drop(columns=["Selecteren"]).equals(view_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]):
     for i in range(len(edited_df)):
         orig_row = view_df[view_df["id"] == edited_df.iloc[i]["id"]].iloc[0]
