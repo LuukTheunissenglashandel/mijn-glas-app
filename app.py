@@ -77,13 +77,16 @@ if not st.session_state.ingelogd:
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
     st.stop()
 
-# --- 4. INITIALISATIE ---
+# --- 4. INITIALISATIE & CALLBACKS ---
 if 'mijn_data' not in st.session_state: 
     st.session_state.mijn_data = laad_data()
 if 'bulk_loc' not in st.session_state:
     st.session_state.bulk_loc = "HK"
 if 'confirm_delete' not in st.session_state:
     st.session_state.confirm_delete = False
+
+def reset_zoekopdracht():
+    st.session_state.zoek_veld = ""
 
 # --- 5. HEADER ---
 col_logo, col_titel, col_logout = st.columns([0.1, 0.75, 0.15])
@@ -101,8 +104,8 @@ with c1:
 with c2: 
     if st.button("ZOEKEN", use_container_width=True): st.rerun()
 with c3: 
-    if st.button("WISSEN", use_container_width=True):
-        st.session_state.zoek_veld = ""; st.rerun()
+    # Fix: gebruik on_click callback om de error te voorkomen
+    st.button("WISSEN", use_container_width=True, on_click=reset_zoekopdracht)
 
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
@@ -129,7 +132,7 @@ edited_df = st.data_editor(
     height=500
 )
 
-# --- 9. ACTIEBOX LOGICA (Zonder rand, met confirm) ---
+# --- 9. ACTIEBOX LOGICA ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerd.empty:
@@ -169,7 +172,6 @@ if not geselecteerd.empty:
                     st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 else:
-    # Reset confirm state als er niets geselecteerd is
     st.session_state.confirm_delete = False
 
 # --- 10. OPSLAAN VAN HANDMATIGE EDITS ---
