@@ -13,27 +13,17 @@ st.markdown("""
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* Ruimte reserveren voor de actiebox om verspringen te minimaliseren */
-    .stElementContainer:has(.action-box) {
-        min-height: 340px; 
-    }
-
+    /* Actiebox compacter maken en witruimte minimaliseren */
     .action-box {
         background-color: #f8f9fa;
         border-radius: 10px;
-        padding: 15px;
+        padding: 10px 15px;
         border: 2px solid #007bff;
-        margin-bottom: 5px;
+        margin-top: -10px; /* Trekt de box dichter naar de zoekbalk */
+        margin-bottom: 10px;
     }
     
-    /* Zoekbalk en Knoppen op gelijke hoogte */
-    div.stButton > button { 
-        border-radius: 8px; 
-        font-weight: 600; 
-        height: 3.5em !important; 
-    }
-    
-    /* Fix voor hoogte zoekveld */
+    /* Zoekbalk hoogte fix */
     div[data-testid="stTextInput"] div[data-baseweb="input"] {
         height: 3.5em !important;
         display: flex;
@@ -43,7 +33,15 @@ st.markdown("""
     div[data-testid="stTextInput"] input {
         height: 3.5em !important;
     }
-
+    
+    /* Knoppen op gelijke hoogte */
+    div.stButton > button { 
+        border-radius: 8px; 
+        font-weight: 600; 
+        height: 3.5em !important; 
+    }
+    
+    /* Checkboxen */
     [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
     
     /* Kleuren */
@@ -109,7 +107,7 @@ if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 7. STABIELE ACTIEHOUDER ---
+# --- 7. ACTIEHOUDER ---
 actie_houder = st.container()
 
 # --- 8. TABEL ---
@@ -134,9 +132,7 @@ geselecteerd = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerd.empty:
     with actie_houder:
-        # Titel is hier verwijderd, div container blijft voor styling
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
-        
         cb_col1, cb_col2 = st.columns(2)
         with cb_col1:
             if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
