@@ -20,12 +20,18 @@ st.markdown("""
         height: 3em;
     }
     
-    /* Vergroot de checkboxen in de tabel voor tabletgebruik */
-    [data-testid="stTableEditor"] input[type="checkbox"] {
-        transform: scale(1.5);
+    /* Vergroot de checkboxen specifiek voor de data_editor op tablets */
+    [data-testid="stDataEditor"] input[type="checkbox"] {
+        transform: scale(1.8);
+        margin: 10px;
         cursor: pointer;
     }
     
+    /* Extra ruimte voor de grotere checkboxen in de cel */
+    [data-testid="stDataEditor"] div[data-testid="stTableDataCell"] {
+        padding: 5px !important;
+    }
+
     /* Specifieke kleur voor de rode knoppen */
     div.stButton > button[key^="delete_btn"], 
     div.stButton > button[key^="confirm_delete"],
@@ -52,12 +58,9 @@ def laad_data():
     df["Selecteren"] = False
     return df
 
-# --- 3. AUTHENTICATIE (Persistent via URL) ---
+# --- 3. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
-    if st.query_params.get("auth") == "true":
-        st.session_state.ingelogd = True
-    else:
-        st.session_state.ingelogd = False
+    st.session_state.ingelogd = st.query_params.get("auth") == "true"
 
 if not st.session_state.ingelogd:
     _, col2, _ = st.columns([1,2,1])
@@ -73,12 +76,15 @@ if not st.session_state.ingelogd:
                 st.error("Onjuist wachtwoord")
     st.stop()
 
-# --- 4. DATA LADEN ---
+# --- 4. DATA LADEN & CALLBACKS ---
 if 'mijn_data' not in st.session_state: 
     st.session_state.mijn_data = laad_data()
-df = st.session_state.mijn_data
 
-# --- 5. DASHBOARD HEADER (Titel + Uitloggen rechtsboven) ---
+# Callback voor de Wissen knop om de crash te voorkomen
+def reset_zoekopdracht():
+    st.session_state.zoek_veld = ""
+
+# --- 5. HEADER (Titel + Uitloggen) ---
 col_titel, col_logout = st.columns([0.85, 0.15])
 with col_titel:
     st.title("🏭 Glas Voorraad Dashboard")
@@ -90,27 +96,26 @@ with col_logout:
         st.rerun()
 
 # --- 6. ZOEKFUNCTIE ---
-if "zoek_query" not in st.session_state:
-    st.session_state.zoek_query = ""
-
 c1, c2, c3 = st.columns([6, 1, 1])
 with c1:
-    # Gebruik van een key voor automatische syncing en wissen
-    zoekterm_input = st.text_input("Zoeken", value=st.session_state.zoek_query, placeholder="🔍 Zoek op order, maat of glastype... (Druk op Enter)", label_visibility="collapsed", key="zoek_veld")
-    st.session_state.zoek_query = zoekterm_input
+    # We gebruiken alleen de 'key'. Enter werkt nu automatisch.
+    zoekterm = st.text_input(
+        "Zoeken", 
+        placeholder="🔍 Zoek op order, maat of glastype... (Druk op Enter)", 
+        label_visibility="collapsed", 
+        key="zoek_veld"
+    )
 
 with c2:
     if st.button("ZOEKEN", use_container_width=True):
         st.rerun()
 with c3:
-    if st.button("WISSEN", use_container_width=True):
-        st.session_state.zoek_query = ""
-        st.session_state.zoek_veld = "" # Wis ook de widget state
-        st.rerun()
+    # De button roept de callback aan die de key veilig leegmaakt
+    st.button("WISSEN", use_container_width=True, on_click=reset_zoekopdracht)
 
-view_df = df.copy()
-if st.session_state.zoek_query:
-    mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(st.session_state.zoek_query, case=False)).any(axis=1)
+view_df = st.session_state.mijn_data.copy()
+if zoekterm:
+    mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
 actie_placeholder = st.empty()
@@ -131,7 +136,7 @@ edited_df = st.data_editor(
     hide_index=True, use_container_width=True, key="editor", height=500
 )
 
-# --- 8. ACTIEBALK (Verplaatsen / Verwijderen) ---
+# --- 8. ACTIEBALK ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 if not geselecteerd.empty:
     with actie_placeholder.container(border=True):
@@ -156,7 +161,7 @@ if not geselecteerd.empty:
                 if c_no.button("ANNULEER", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
-# --- 9. BEHEER SECTIE (Onder de tabel) ---
+# --- 9. BEHEER SECTIE ONDERAAN ---
 st.divider()
 st.subheader("⚙️ Beheer & Toevoegen")
 exp_col1, exp_col2 = st.columns(2)
@@ -184,7 +189,6 @@ with exp_col2:
             try:
                 raw = pd.read_excel(uploaded_file)
                 raw.columns = [str(c).strip().lower() for c in raw.columns]
-                # Mapping blijft hetzelfde voor database compatibiliteit
                 mapping = {"locatie": "locatie", "aantal": "aantal", "breedte": "breedte", "hoogte": "hoogte", "order": "order_nummer", "omschrijving": "omschrijving"}
                 raw = raw.rename(columns=mapping)
                 import_df = raw.dropna(subset=["order_nummer"])
@@ -200,7 +204,7 @@ if st.button("🔄 DATA VERVERSEN", use_container_width=True):
 # --- 10. HANDMATIGE WIJZIGINGEN OPSLAAN ---
 if not edited_df.drop(columns=["Selecteren"]).equals(view_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]):
     for i in range(len(edited_df)):
-        orig_row = view_df[view_df["id"] == edited_df.iloc[i]["id"]].iloc[0]
+        orig_row = st.session_state.mijn_data[st.session_state.mijn_data["id"] == edited_df.iloc[i]["id"]].iloc[0]
         curr_row = edited_df.iloc[i]
         if not curr_row.drop("Selecteren").equals(orig_row[curr_row.drop("Selecteren").index]):
             update_data = {"locatie": str(curr_row["locatie"]), "aantal": int(curr_row["aantal"]), "breedte": int(curr_row["breedte"]), "hoogte": int(curr_row["hoogte"]), "omschrijving": str(curr_row["omschrijving"]), "order_nummer": str(curr_row["order_nummer"])}
