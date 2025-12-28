@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 
-# --- 1. CONFIGURATIE ---
+# --- 1. CONFIGURATIE & STYLING ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
 WACHTWOORD = "glas123"
@@ -12,9 +12,22 @@ st.markdown("""
     <style>
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
-    div.stButton > button { border-radius: 8px; font-weight: 600; height: 3em; }
+    
+    /* Styling voor de actie-sectie */
+    .action-box {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 15px;
+        border: 1px solid #e0e0e0;
+        margin-bottom: 20px;
+    }
+    
+    div.stButton > button { border-radius: 8px; font-weight: 600; height: 3.5em; }
     [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
-    div.stButton > button[key^="delete_btn"], div.stButton > button[key="logout_btn"] { background-color: #ff4b4b; color: white; }
+    
+    /* Kleuren voor knoppen */
+    div.stButton > button[key^="delete_btn"] { background-color: #ff4b4b; color: white; border: none; }
+    div.stButton > button[key="logout_btn"] { background-color: #ff4b4b; color: white; height: 2.5em; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -45,7 +58,7 @@ if not st.session_state.ingelogd:
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
     st.stop()
 
-# --- 4. DATA INITIALISATIE ---
+# --- 4. INITIALISATIE ---
 if 'mijn_data' not in st.session_state: 
     st.session_state.mijn_data = laad_data()
 if 'bulk_loc' not in st.session_state:
@@ -62,7 +75,7 @@ with col_logout:
 
 # --- 6. ZOEKFUNCTIE ---
 c1, c2, c3 = st.columns([6, 1, 1])
-with c1: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek...", label_visibility="collapsed", key="zoek_veld")
+with c1: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
 with c2: 
     if st.button("ZOEKEN", use_container_width=True): st.rerun()
 with c3: 
@@ -74,70 +87,82 @@ if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 7. TABEL ---
+# --- 7. ACTIESECTIE (Direct onder zoeken) ---
+# We bepalen eerst de selectie uit de editor (indien aanwezig)
+selection_df = view_df[view_df["Selecteren"] == True] # Fallback
+if "main_editor" in st.session_state:
+    # Check welke rijen zijn aangevinkt in de actuele state
+    edited_rows = st.session_state["main_editor"].get("edited_rows", {})
+    # Hier filteren we op de checkbox 'Selecteren'
+    selected_indices = [int(k) for k, v in edited_rows.items() if v.get("Selecteren") == True]
+    # Gecombineerd met de data
+    geselecteerd = view_df.iloc[selected_indices] if selected_indices else pd.DataFrame()
+else:
+    geselecteerd = pd.DataFrame()
+
+if not geselecteerd.empty:
+    totaal_ruiten = int(geselecteerd["aantal"].sum())
+    st.markdown('<div class="action-box">', unsafe_allow_html=True)
+    st.subheader(f"📍 Acties voor {totaal_ruiten} ruiten")
+    
+    col_btn_move, col_btn_del = st.columns(2)
+    with col_btn_move:
+        if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
+            get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", geselecteerd["id"].tolist()).execute()
+            st.session_state.mijn_data = laad_data(); st.rerun()
+    with col_btn_del:
+        if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
+            get_supabase().table("glas_voorraad").delete().in_("id", geselecteerd["id"].tolist()).execute()
+            st.session_state.mijn_data = laad_data(); st.rerun()
+
+    st.write("**Kies nieuwe doellocatie:**")
+    cols_per_row = 6 if st.columns(1)[0].get_variant == "wide" else 4
+    rows = [LOCATIE_OPTIES[i:i + 5] for i in range(0, len(LOCATIE_OPTIES), 5)]
+    for row in rows:
+        grid_cols = st.columns(5)
+        for idx, loc_naam in enumerate(row):
+            is_active = st.session_state.bulk_loc == loc_naam
+            if grid_cols[idx].button(loc_naam, key=f"grid_{loc_naam}", use_container_width=True, type="primary" if is_active else "secondary"):
+                st.session_state.bulk_loc = loc_naam
+                st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+else:
+    st.info("💡 Selecteer één of meerdere rijen in de tabel hieronder om ze te verplaatsen of te wissen.")
+
+# --- 8. TABEL ---
 edited_df = st.data_editor(
     view_df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]],
     column_config={
-        "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"),
+        "Selecteren": st.column_config.CheckboxColumn("Vink aan", width="small"),
         "id": None,
         "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.NumberColumn("Aant.", width="small"),
     },
-    hide_index=True, use_container_width=True, key="main_editor", height=400
+    hide_index=True, use_container_width=True, key="main_editor", height=500
 )
 
-# --- 8. ACTIEBALK (Verschijnt alleen bij selectie) ---
-geselecteerd = edited_df[edited_df["Selecteren"] == True]
-if not geselecteerd.empty:
-    totaal_ruiten = int(geselecteerd["aantal"].sum())
-    with st.container(border=True):
-        st.markdown(f"### 📍 Actie voor {totaal_ruiten} ruiten")
-        
-        # Buttons bovenaan
-        cb1, cb2 = st.columns(2)
-        with cb1:
-            if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
-                get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", geselecteerd["id"].tolist()).execute()
-                st.session_state.mijn_data = laad_data(); st.rerun()
-        with cb2:
-            if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
-                get_supabase().table("glas_voorraad").delete().in_("id", geselecteerd["id"].tolist()).execute()
-                st.session_state.mijn_data = laad_data(); st.rerun()
-
-        # Grid onderaan
-        st.write("Kies nieuwe locatie:")
-        cols_per_row = 5
-        for i in range(0, len(LOCATIE_OPTIES), cols_per_row):
-            row_options = LOCATIE_OPTIES[i:i+cols_per_row]
-            grid_cols = st.columns(cols_per_row)
-            for idx, loc_naam in enumerate(row_options):
-                if grid_cols[idx].button(loc_naam, key=f"grid_{loc_naam}", use_container_width=True, 
-                                       type="primary" if st.session_state.bulk_loc == loc_naam else "secondary"):
-                    st.session_state.bulk_loc = loc_naam
-                    st.rerun()
-
-# --- 9. BEHEER & OPSLAAN LOGICA ---
-# Deze sectie kijkt specifiek of er cellen zijn aangepast (GEEN checkboxen)
+# --- 9. OPSLAAN VAN HANDMATIGE EDITS ---
 if "main_editor" in st.session_state:
     edits = st.session_state["main_editor"].get("edited_rows", {})
     if edits:
         updates_made = False
         for row_idx, changes in edits.items():
-            # Check of de verandering iets anders is dan de 'Selecteren' kolom
+            # Alleen opslaan als er MEER dan alleen de checkbox is veranderd
             inhoud_wijziging = {k: v for k, v in changes.items() if k != "Selecteren"}
             if inhoud_wijziging:
-                row_id = view_df.iloc[row_idx]["id"]
+                row_id = view_df.iloc[int(row_idx)]["id"]
                 get_supabase().table("glas_voorraad").update(inhoud_wijziging).eq("id", row_id).execute()
                 updates_made = True
-        
         if updates_made:
-            st.session_state.mijn_data = laad_data()
-            st.rerun()
+            st.session_state.mijn_data = laad_data(); st.rerun()
 
+# --- 10. BEHEER SECTIE (Onderkant) ---
 st.divider()
-exp1, exp2 = st.columns(2)
-with exp1:
-    with st.expander("➕ Nieuwe Ruit Toevoegen"):
+st.subheader("⚙️ Beheer & Toevoegen")
+exp_col1, exp_col2 = st.columns(2)
+
+with exp_col1:
+    with st.expander("➕ Nieuwe Ruit Handmatig"):
         with st.form("add_form", clear_on_submit=True):
             f_loc = st.selectbox("Locatie", LOCATIE_OPTIES)
             f_ord = st.text_input("Ordernummer")
@@ -146,9 +171,24 @@ with exp1:
             f_hg = st.number_input("Hoogte", value=0)
             f_oms = st.text_input("Glastype")
             if st.form_submit_button("VOEG TOE", use_container_width=True):
-                get_supabase().table("glas_voorraad").insert({"locatie": f_loc, "order_nummer": f_ord, "aantal": f_aan, "breedte": f_br, "hoogte": f_hg, "omschrijving": f_oms}).execute()
+                get_supabase().table("glas_voorraad").insert({"locatie": f_loc, "order_nummer": f_ord, "aantal": f_aan, "breedte": f_br, "hoogte": f_hg, "omschrijving": f_oms, "uit_voorraad": "Nee"}).execute()
                 st.session_state.mijn_data = laad_data(); st.rerun()
 
-with exp2:
-    if st.button("🔄 DATA VERVERSEN", use_container_width=True):
-        st.session_state.mijn_data = laad_data(); st.rerun()
+with exp_col2:
+    with st.expander("📥 Excel Import"):
+        uploaded_file = st.file_uploader("Kies Excel bestand", type=["xlsx"])
+        if uploaded_file and st.button("UPLOAD NU", use_container_width=True):
+            try:
+                raw = pd.read_excel(uploaded_file)
+                raw.columns = [str(c).strip().lower() for c in raw.columns]
+                mapping = {"locatie": "locatie", "aantal": "aantal", "breedte": "breedte", "hoogte": "hoogte", "order": "order_nummer", "omschrijving": "omschrijving"}
+                raw = raw.rename(columns=mapping)
+                import_df = raw.dropna(subset=["order_nummer"])
+                import_df["uit_voorraad"] = "Nee"
+                data_dict = import_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("").to_dict(orient="records")
+                get_supabase().table("glas_voorraad").insert(data_dict).execute()
+                st.success("Import succesvol!"); st.session_state.mijn_data = laad_data(); st.rerun()
+            except Exception as e: st.error(f"Fout bij import: {e}")
+
+if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
+    st.session_state.mijn_data = laad_data(); st.rerun()
