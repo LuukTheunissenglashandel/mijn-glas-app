@@ -16,33 +16,12 @@ st.markdown("""
     <style>
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
-    
-    /* Maak alle knoppen consistent */
-    div.stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-        height: 3em;
-    }
-    
-    /* Grid knoppen styling */
-    div[data-testid="column"] {
-        padding: 1px !important;
-    }
-
-    /* Vergroot de checkboxen voor tablets */
-    [data-testid="stDataEditor"] input[type="checkbox"] {
-        transform: scale(1.8);
-        margin: 10px;
-        cursor: pointer;
-    }
-
-    /* Rode knoppen styling */
+    div.stButton > button { border-radius: 8px; font-weight: 600; height: 3em; }
+    div[data-testid="column"] { padding: 1px !important; }
+    [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
     div.stButton > button[key^="delete_btn"], 
     div.stButton > button[key^="confirm_delete"],
-    div.stButton > button[key="logout_btn"] {
-        background-color: #ff4b4b;
-        color: white;
-    }
+    div.stButton > button[key="logout_btn"] { background-color: #ff4b4b; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -70,17 +49,13 @@ if not st.session_state.ingelogd:
         ww = st.text_input("Wachtwoord", type="password")
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
-                st.session_state.ingelogd = True
-                st.query_params["auth"] = "true"
-                st.rerun()
-            else:
-                st.error("Onjuist wachtwoord")
+                st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
+            else: st.error("Onjuist wachtwoord")
     st.stop()
 
 # --- 4. DATA LADEN ---
 if 'mijn_data' not in st.session_state: 
     st.session_state.mijn_data = laad_data()
-
 if 'bulk_loc' not in st.session_state:
     st.session_state.bulk_loc = "HK"
 
@@ -89,25 +64,19 @@ def reset_zoekopdracht():
 
 # --- 5. HEADER ---
 col_logo, col_titel, col_logout = st.columns([0.1, 0.75, 0.15])
-with col_logo:
-    st.image("theunissen.webp", use_container_width=True)
-with col_titel:
-    st.title("Voorraad glas")
+with col_logo: st.image("theunissen.webp", use_container_width=True)
+with col_titel: st.title("Voorraad glas")
 with col_logout:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
-        st.session_state.ingelogd = False
-        st.query_params.clear()
-        st.rerun()
+        st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
 # --- 6. ZOEKFUNCTIE ---
 c1, c2, c3 = st.columns([6, 1, 1])
-with c1:
-    zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of glastype...", label_visibility="collapsed", key="zoek_veld")
-with c2:
+with c1: zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of glastype...", label_visibility="collapsed", key="zoek_veld")
+with c2: 
     if st.button("ZOEKEN", use_container_width=True): st.rerun()
-with c3:
-    st.button("WISSEN", use_container_width=True, on_click=reset_zoekopdracht)
+with c3: st.button("WISSEN", use_container_width=True, on_click=reset_zoekopdracht)
 
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
@@ -117,6 +86,7 @@ if zoekterm:
 actie_placeholder = st.empty()
 
 # --- 7. TABEL ---
+# We tonen de tabel met een vaste key om onnodige resets te voorkomen
 edited_df = st.data_editor(
     view_df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]],
     column_config={
@@ -124,40 +94,18 @@ edited_df = st.data_editor(
         "id": None,
         "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.NumberColumn("Aant.", width="small"),
-        "breedte": st.column_config.NumberColumn("Br.", width="small"),
-        "hoogte": st.column_config.NumberColumn("Hg.", width="small"),
     },
-    hide_index=True, use_container_width=True, key="editor", height=400
+    hide_index=True, use_container_width=True, key="main_editor", height=400
 )
 
-# --- 8. ACTIEBALK MET LOCATIEGRID ---
+# --- 8. ACTIEBALK (Bovenaan bij selectie) ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 if not geselecteerd.empty:
+    totaal_ruiten = int(geselecteerd["aantal"].sum())
     with actie_placeholder.container(border=True):
-        st.markdown(f"### 📍 Actie voor {len(geselecteerd)} geselecteerde ruiten")
+        st.markdown(f"### 📍 Actie voor {totaal_ruiten} ruiten ({len(geselecteerd)} regels)")
         
-        # HET GRID
-        st.write("Kies nieuwe locatie:")
-        cols_per_row = 5
-        rows = [LOCATIE_OPTIES[i:i + cols_per_row] for i in range(0, len(LOCATIE_OPTIES), cols_per_row)]
-        
-        for row in rows:
-            grid_cols = st.columns(cols_per_row)
-            for i, loc_naam in enumerate(row):
-                # Is deze knop de momenteel geselecteerde?
-                is_selected = st.session_state.bulk_loc == loc_naam
-                if grid_cols[i].button(
-                    loc_naam, 
-                    key=f"grid_{loc_naam}", 
-                    use_container_width=True,
-                    type="primary" if is_selected else "secondary"
-                ):
-                    st.session_state.bulk_loc = loc_naam
-                    st.rerun()
-
-        st.divider()
-        
-        # ACTIE KNOPPEN
+        # 1. De buttons bovenaan
         col_move, col_del = st.columns(2)
         with col_move:
             if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
@@ -178,13 +126,26 @@ if not geselecteerd.empty:
                 if c_no.button("ANNULEER", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
+        st.write("---")
+        
+        # 2. Het grid onder de buttons
+        st.write("Kies nieuwe locatie:")
+        cols_per_row = 5
+        rows = [LOCATIE_OPTIES[i:i + cols_per_row] for i in range(0, len(LOCATIE_OPTIES), cols_per_row)]
+        for row in rows:
+            grid_cols = st.columns(cols_per_row)
+            for i, loc_naam in enumerate(row):
+                is_selected = st.session_state.bulk_loc == loc_naam
+                if grid_cols[i].button(loc_naam, key=f"grid_{loc_naam}", use_container_width=True, type="primary" if is_selected else "secondary"):
+                    st.session_state.bulk_loc = loc_naam
+                    st.rerun()
+
 # --- 9. BEHEER SECTIE ---
 st.divider()
 st.subheader("⚙️ Beheer & Toevoegen")
 exp_col1, exp_col2 = st.columns(2)
-
 with exp_col1:
-    with st.expander("➕ Nieuwe Ruit Toevoegen", expanded=False):
+    with st.expander("➕ Nieuwe Ruit Toevoegen"):
         with st.form("handmatige_toevoeging", clear_on_submit=True):
             n_loc = st.selectbox("Locatie", LOCATIE_OPTIES)
             n_order = st.text_input("Ordernummer")
@@ -197,10 +158,9 @@ with exp_col1:
                     nieuwe_data = {"locatie": n_loc, "order_nummer": n_order, "aantal": n_aantal, "breedte": n_br, "hoogte": n_hg, "omschrijving": n_oms, "uit_voorraad": "Nee"}
                     get_supabase().table("glas_voorraad").insert(nieuwe_data).execute()
                     st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
-                else: st.error("Ordernummer is verplicht!")
 
 with exp_col2:
-    with st.expander("📥 Excel Import", expanded=False):
+    with st.expander("📥 Excel Import"):
         uploaded_file = st.file_uploader("Kies Excel", type=["xlsx"], label_visibility="collapsed")
         if uploaded_file and st.button("UPLOADEN", use_container_width=True):
             try:
@@ -218,12 +178,23 @@ with exp_col2:
 if st.button("🔄 DATA VERVERSEN", use_container_width=True):
     st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
 
-# --- 10. OPSLAAN VAN TABEL WIJZIGINGEN ---
-if not edited_df.drop(columns=["Selecteren"]).equals(view_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]):
+# --- 10. OPSLAAN VAN TABEL WIJZIGINGEN (Geoptimaliseerd) ---
+# We vergelijken alleen de inhoudskolommen om onnodige reruns bij selecteren te voorkomen
+inhoud_cols = ["locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
+if not edited_df[inhoud_cols].equals(view_df[inhoud_cols]):
     for i in range(len(edited_df)):
-        orig_row = st.session_state.mijn_data[st.session_state.mijn_data["id"] == edited_df.iloc[i]["id"]].iloc[0]
+        id_val = edited_df.iloc[i]["id"]
+        orig_row = st.session_state.mijn_data[st.session_state.mijn_data["id"] == id_val].iloc[0]
         curr_row = edited_df.iloc[i]
-        if not curr_row.drop("Selecteren").equals(orig_row[curr_row.drop("Selecteren").index]):
-            update_data = {"locatie": str(curr_row["locatie"]), "aantal": int(curr_row["aantal"]), "breedte": int(curr_row["breedte"]), "hoogte": int(curr_row["hoogte"]), "omschrijving": str(curr_row["omschrijving"]), "order_nummer": str(curr_row["order_nummer"])}
-            get_supabase().table("glas_voorraad").update(update_data).eq("id", curr_row["id"]).execute()
+        
+        # Check of er echt iets veranderd is in de inhoud van deze rij
+        if not curr_row[inhoud_cols].equals(orig_row[inhoud_cols]):
+            update_data = {col: curr_row[col] for col in inhoud_cols}
+            # Zorg voor juiste types
+            update_data["aantal"] = int(update_data["aantal"])
+            update_data["breedte"] = int(update_data["breedte"])
+            update_data["hoogte"] = int(update_data["hoogte"])
+            
+            get_supabase().table("glas_voorraad").update(update_data).eq("id", id_val).execute()
+            
     st.cache_data.clear(); st.session_state.mijn_data = laad_data(); st.rerun()
