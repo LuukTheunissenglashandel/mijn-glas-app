@@ -13,13 +13,12 @@ st.markdown("""
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* Actiebox compacter maken en witruimte minimaliseren */
+    /* Actiebox zonder blauwe rand */
     .action-box {
         background-color: #f8f9fa;
         border-radius: 10px;
         padding: 10px 15px;
-        border: 2px solid #007bff;
-        margin-top: -10px; /* Trekt de box dichter naar de zoekbalk */
+        margin-top: -10px;
         margin-bottom: 10px;
     }
     
@@ -45,7 +44,8 @@ st.markdown("""
     [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
     
     /* Kleuren */
-    div.stButton > button[key^="delete_btn"] { background-color: #ff4b4b; color: white; border: none; }
+    div.stButton > button[key^="delete_btn"], 
+    div.stButton > button[key^="confirm_delete_yes"] { background-color: #ff4b4b; color: white; border: none; }
     div.stButton > button[key="logout_btn"] { background-color: #ff4b4b; color: white; height: 2.5em !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -82,6 +82,8 @@ if 'mijn_data' not in st.session_state:
     st.session_state.mijn_data = laad_data()
 if 'bulk_loc' not in st.session_state:
     st.session_state.bulk_loc = "HK"
+if 'confirm_delete' not in st.session_state:
+    st.session_state.confirm_delete = False
 
 # --- 5. HEADER ---
 col_logo, col_titel, col_logout = st.columns([0.1, 0.75, 0.15])
@@ -127,13 +129,14 @@ edited_df = st.data_editor(
     height=500
 )
 
-# --- 9. ACTIEBOX LOGICA ---
+# --- 9. ACTIEBOX LOGICA (Zonder rand, met confirm) ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 
 if not geselecteerd.empty:
     with actie_houder:
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
         cb_col1, cb_col2 = st.columns(2)
+        
         with cb_col1:
             if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
                 ids = geselecteerd["id"].tolist()
@@ -141,10 +144,18 @@ if not geselecteerd.empty:
                 st.session_state.mijn_data = laad_data(); st.rerun()
                 
         with cb_col2:
-            if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
-                ids = geselecteerd["id"].tolist()
-                get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
-                st.session_state.mijn_data = laad_data(); st.rerun()
+            if not st.session_state.confirm_delete:
+                if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
+                    st.session_state.confirm_delete = True; st.rerun()
+            else:
+                st.warning("Zeker weten?")
+                c_yes, c_no = st.columns(2)
+                if c_yes.button("JA, VERWIJDER", key="confirm_delete_yes", use_container_width=True):
+                    ids = geselecteerd["id"].tolist()
+                    get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
+                    st.session_state.confirm_delete = False; st.session_state.mijn_data = laad_data(); st.rerun()
+                if c_no.button("ANNULEER", use_container_width=True):
+                    st.session_state.confirm_delete = False; st.rerun()
 
         st.write("**Kies nieuwe doellocatie:**")
         for i in range(0, len(LOCATIE_OPTIES), 5):
@@ -157,6 +168,9 @@ if not geselecteerd.empty:
                     st.session_state.bulk_loc = loc_naam
                     st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
+else:
+    # Reset confirm state als er niets geselecteerd is
+    st.session_state.confirm_delete = False
 
 # --- 10. OPSLAAN VAN HANDMATIGE EDITS ---
 if "main_editor" in st.session_state:
