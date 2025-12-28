@@ -3,7 +3,12 @@ import pandas as pd
 from supabase import create_client, Client
 
 # --- 1. CONFIGURATIE & STYLING ---
-st.set_page_config(layout="wide", page_title="Glas Voorraad")
+# Hier stellen we de titel en het .webp logo als favicon in
+st.set_page_config(
+    layout="wide", 
+    page_title="Theunissen Glashandel - Voorraad glas",
+    page_icon="theunissen.webp"
+)
 
 WACHTWOORD = "glas123"
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
@@ -58,14 +63,14 @@ def laad_data():
     df["Selecteren"] = False
     return df
 
-# --- 3. AUTHENTICATIE ---
+# --- 3. AUTHENTICATIE (Persistent via URL) ---
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = st.query_params.get("auth") == "true"
 
 if not st.session_state.ingelogd:
     _, col2, _ = st.columns([1,2,1])
     with col2:
-        st.markdown("<h2 style='text-align: center;'>🔒 Glas Voorraad</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>Theunissen Glashandel - Voorraad glas</h2>", unsafe_allow_html=True)
         ww = st.text_input("Wachtwoord", type="password")
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
@@ -80,14 +85,19 @@ if not st.session_state.ingelogd:
 if 'mijn_data' not in st.session_state: 
     st.session_state.mijn_data = laad_data()
 
-# Callback voor de Wissen knop om de crash te voorkomen
 def reset_zoekopdracht():
     st.session_state.zoek_veld = ""
 
-# --- 5. HEADER (Titel + Uitloggen) ---
-col_titel, col_logout = st.columns([0.85, 0.15])
+# --- 5. HEADER (Logo linksboven + Titel + Uitloggen rechtsboven) ---
+col_logo, col_titel, col_logout = st.columns([0.1, 0.75, 0.15])
+
+with col_logo:
+    # Plaatst het logo klein en schaalbaar linksboven
+    st.image("theunissen.webp", use_container_width=True)
+
 with col_titel:
-    st.title("🏭 Glas Voorraad Dashboard")
+    st.title("Theunissen Glashandel - Voorraad glas")
+
 with col_logout:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
@@ -98,7 +108,6 @@ with col_logout:
 # --- 6. ZOEKFUNCTIE ---
 c1, c2, c3 = st.columns([6, 1, 1])
 with c1:
-    # We gebruiken alleen de 'key'. Enter werkt nu automatisch.
     zoekterm = st.text_input(
         "Zoeken", 
         placeholder="🔍 Zoek op order, maat of glastype... (Druk op Enter)", 
@@ -110,7 +119,6 @@ with c2:
     if st.button("ZOEKEN", use_container_width=True):
         st.rerun()
 with c3:
-    # De button roept de callback aan die de key veilig leegmaakt
     st.button("WISSEN", use_container_width=True, on_click=reset_zoekopdracht)
 
 view_df = st.session_state.mijn_data.copy()
@@ -136,7 +144,7 @@ edited_df = st.data_editor(
     hide_index=True, use_container_width=True, key="editor", height=500
 )
 
-# --- 8. ACTIEBALK ---
+# --- 8. ACTIEBALK (Verplaatsen / Verwijderen) ---
 geselecteerd = edited_df[edited_df["Selecteren"] == True]
 if not geselecteerd.empty:
     with actie_placeholder.container(border=True):
@@ -161,7 +169,7 @@ if not geselecteerd.empty:
                 if c_no.button("ANNULEER", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
-# --- 9. BEHEER SECTIE ONDERAAN ---
+# --- 9. BEHEER SECTIE (Onder de tabel) ---
 st.divider()
 st.subheader("⚙️ Beheer & Toevoegen")
 exp_col1, exp_col2 = st.columns(2)
