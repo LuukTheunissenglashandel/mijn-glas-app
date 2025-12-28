@@ -139,24 +139,15 @@ geselecteerd = edited_df[edited_df["Selecteren"] == True]
 if not geselecteerd.empty:
     with actie_houder:
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
-        # We maken 3 kolommen: Uitvoeren, Kiezen (nieuw), Verwijderen
-        cb_col1, cb_col2, cb_col3 = st.columns(3)
+        cb_col1, cb_col2 = st.columns(2)
         
         with cb_col1:
-            if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
-                ids = geselecteerd["id"].tolist()
-                get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids).execute()
-                st.session_state.mijn_data = laad_data()
-                st.session_state.show_location_grid = False
-                st.rerun()
-                
-        with cb_col2:
             knop_label = "📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT SELECTIE"
             if st.button(knop_label, use_container_width=True):
                 st.session_state.show_location_grid = not st.session_state.show_location_grid
                 st.rerun()
 
-        with cb_col3:
+        with cb_col2:
             if not st.session_state.confirm_delete:
                 if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
                     st.session_state.confirm_delete = True; st.rerun()
@@ -170,9 +161,16 @@ if not geselecteerd.empty:
                 if c_no.button("ANNULEER", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
-        # Toon de grid alleen als er op de knop geklikt is
+        # Toon de Verplaats-knop en Grid alleen na klik op Locatie Wijzigen
         if st.session_state.show_location_grid:
             st.write("---")
+            if st.button(f"🚀 NU VERPLAATSEN NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
+                ids = geselecteerd["id"].tolist()
+                get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids).execute()
+                st.session_state.mijn_data = laad_data()
+                st.session_state.show_location_grid = False
+                st.rerun()
+            
             st.write("**Kies nieuwe doellocatie:**")
             for i in range(0, len(LOCATIE_OPTIES), 5):
                 row_options = LOCATIE_OPTIES[i:i+5]
