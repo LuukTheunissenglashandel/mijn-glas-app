@@ -10,7 +10,7 @@ st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunis
 WACHTWOORD = "glas123"
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
-# Functie om het logo in te laden voor de HTML header
+# Functie om logo om te zetten naar base64 voor weergave in HTML
 def get_base64_logo(img_path):
     if os.path.exists(img_path):
         with open(img_path, "rb") as f:
@@ -25,7 +25,7 @@ st.markdown(f"""
     .block-container {{ padding-top: 1.5rem; padding-bottom: 5rem; }}
     #MainMenu, footer, header {{visibility: hidden;}}
     
-    /* Flex-Header voor Logo en Titel (altijd naast elkaar) */
+    /* Flex-Header: logo en titel altijd op één lijn */
     .header-container {{
         display: flex;
         align-items: center;
@@ -37,14 +37,14 @@ st.markdown(f"""
     .header-container img {{
         height: auto;
         flex-shrink: 0;
-        width: 70px; /* Grootte op Desktop */
+        width: 70px; /* Standaard Desktop grootte */
     }}
 
     .header-container h1 {{
         margin: 0;
         white-space: nowrap;
         font-weight: 700;
-        font-size: 2.2rem !important; /* Grootte op Desktop */
+        font-size: 2.2rem !important;
     }}
 
     /* Schaling voor Tablet */
@@ -60,7 +60,7 @@ st.markdown(f"""
         .header-container {{ gap: 10px; }}
     }}
 
-    /* Bestaande UI styling uit origineel */
+    /* Behoud van originele UI styling */
     .action-box {{
         background-color: #f8f9fa;
         border-radius: 10px;
@@ -83,7 +83,7 @@ st.markdown(f"""
         border-radius: 8px; 
         font-weight: 600; 
         height: 3.5em !important; 
-    }
+    }}
     
     [data-testid="stDataEditor"] input[type="checkbox"] {{ transform: scale(1.8); margin: 10px; cursor: pointer; }}
     
@@ -113,7 +113,7 @@ if "ingelogd" not in st.session_state:
 if not st.session_state.ingelogd:
     _, col2, _ = st.columns([1,2,1])
     with col2:
-        st.header("Inloggen") # Titel aangepast naar Inloggen
+        st.header("Inloggen") # Aangepast van "Voorraad glas" naar "Inloggen"
         ww = st.text_input("Wachtwoord", type="password")
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
@@ -133,7 +133,7 @@ if 'show_location_grid' not in st.session_state:
 def reset_zoekopdracht():
     st.session_state.zoek_veld = ""
 
-# --- 5. HEADER (Schaalbaar logo links van titel) ---
+# --- 5. HEADER ---
 col_head, col_logout = st.columns([0.8, 0.2])
 with col_head:
     st.markdown(f"""
