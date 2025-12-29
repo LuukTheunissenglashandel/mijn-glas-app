@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
+import base64
+import os
 
 # --- 1. CONFIGURATIE & STYLING ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
@@ -8,80 +10,86 @@ st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunis
 WACHTWOORD = "glas123"
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
-st.markdown("""
+# Functie om het logo in te laden voor de HTML header
+def get_base64_logo(img_path):
+    if os.path.exists(img_path):
+        with open(img_path, "rb") as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    return ""
+
+logo_base64 = get_base64_logo("theunissen.webp")
+
+st.markdown(f"""
     <style>
-    .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
-    #MainMenu, footer, header {visibility: hidden;}
+    .block-container {{ padding-top: 1.5rem; padding-bottom: 5rem; }}
+    #MainMenu, footer, header {{visibility: hidden;}}
     
-    /* Schaalbare Flex-Header */
-    .header-container {
+    /* Flex-Header voor Logo en Titel (altijd naast elkaar) */
+    .header-container {{
         display: flex;
         align-items: center;
         gap: 15px;
         margin-bottom: 20px;
         flex-wrap: nowrap;
-    }
+    }}
 
-    .header-container img {
+    .header-container img {{
         height: auto;
         flex-shrink: 0;
-        width: 70px; /* Desktop */
-    }
+        width: 70px; /* Grootte op Desktop */
+    }}
 
-    .header-container h1 {
+    .header-container h1 {{
         margin: 0;
         white-space: nowrap;
         font-weight: 700;
-        font-size: 2.2rem !important; /* Desktop */
-    }
+        font-size: 2.2rem !important; /* Grootte op Desktop */
+    }}
 
     /* Schaling voor Tablet */
-    @media (max-width: 992px) {
-        .header-container img { width: 50px; }
-        .header-container h1 { font-size: 1.7rem !important; }
-    }
+    @media (max-width: 992px) {{
+        .header-container img {{ width: 50px; }}
+        .header-container h1 {{ font-size: 1.7rem !important; }}
+    }}
 
     /* Schaling voor Mobiel */
-    @media (max-width: 600px) {
-        .header-container img { width: 38px; }
-        .header-container h1 { font-size: 1.3rem !important; }
-        .header-container { gap: 10px; }
-    }
+    @media (max-width: 600px) {{
+        .header-container img {{ width: 38px; }}
+        .header-container h1 {{ font-size: 1.3rem !important; }}
+        .header-container {{ gap: 10px; }}
+    }}
 
-    /* Bestaande UI Actiebox */
-    .action-box {
+    /* Bestaande UI styling uit origineel */
+    .action-box {{
         background-color: #f8f9fa;
         border-radius: 10px;
         padding: 10px 15px;
         margin-top: -10px;
         margin-bottom: 10px;
-    }
+    }}
     
-    /* Zoekbalk hoogte fix */
-    div[data-testid="stTextInput"] div[data-baseweb="input"] {
+    div[data-testid="stTextInput"] div[data-baseweb="input"] {{
         height: 3.5em !important;
         display: flex;
         align-items: center;
-    }
+    }}
     
-    div[data-testid="stTextInput"] input {
+    div[data-testid="stTextInput"] input {{
         height: 3.5em !important;
-    }
+    }}
     
-    /* Knoppen op gelijke hoogte */
-    div.stButton > button { 
+    div.stButton > button {{ 
         border-radius: 8px; 
         font-weight: 600; 
         height: 3.5em !important; 
     }
     
-    /* Checkboxen */
-    [data-testid="stDataEditor"] input[type="checkbox"] { transform: scale(1.8); margin: 10px; cursor: pointer; }
+    [data-testid="stDataEditor"] input[type="checkbox"] {{ transform: scale(1.8); margin: 10px; cursor: pointer; }}
     
-    /* Kleuren */
     div.stButton > button[key^="delete_btn"], 
-    div.stButton > button[key^="confirm_delete_yes"] { background-color: #ff4b4b; color: white; border: none; }
-    div.stButton > button[key="logout_btn"] { background-color: #ff4b4b; color: white; height: 2.5em !important; }
+    div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; border: none; }}
+    div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -125,18 +133,18 @@ if 'show_location_grid' not in st.session_state:
 def reset_zoekopdracht():
     st.session_state.zoek_veld = ""
 
-# --- 5. HEADER (Logo & Titel op één lijn, schaalbaar) ---
-col_head, col_logout = st.columns([0.85, 0.15])
+# --- 5. HEADER (Schaalbaar logo links van titel) ---
+col_head, col_logout = st.columns([0.8, 0.2])
 with col_head:
     st.markdown(f"""
         <div class="header-container">
-            <img src="theunissen.webp" onerror="this.src='https://via.placeholder.com/50x50?text=Logo'">
+            <img src="data:image/webp;base64,{logo_base64}">
             <h1>Voorraad glas</h1>
         </div>
     """, unsafe_allow_html=True)
 with col_logout:
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-    if st.button("🚪", key="logout_btn", use_container_width=True):
+    if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
 # --- 6. ZOEKFUNCTIE ---
@@ -275,4 +283,3 @@ with exp_col2:
 
 if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
     st.session_state.mijn_data = laad_data(); st.rerun()
-
