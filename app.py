@@ -130,7 +130,7 @@ col_head, col_logout = st.columns([0.85, 0.15])
 with col_head:
     st.markdown(f"""
         <div class="header-container">
-            <img src="app/static/theunissen.webp" onerror="this.src='https://via.placeholder.com/50x50?text=Logo'">
+            <img src="theunissen.webp" onerror="this.src='https://via.placeholder.com/50x50?text=Logo'">
             <h1>Voorraad glas</h1>
         </div>
     """, unsafe_allow_html=True)
@@ -275,3 +275,4 @@ with exp_col2:
 
 if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
     st.session_state.mijn_data = laad_data(); st.rerun()
+
