@@ -13,7 +13,42 @@ st.markdown("""
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* Actiebox zonder blauwe rand */
+    /* Schaalbare Flex-Header */
+    .header-container {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 20px;
+        flex-wrap: nowrap;
+    }
+
+    .header-container img {
+        height: auto;
+        flex-shrink: 0;
+        width: 70px; /* Desktop */
+    }
+
+    .header-container h1 {
+        margin: 0;
+        white-space: nowrap;
+        font-weight: 700;
+        font-size: 2.2rem !important; /* Desktop */
+    }
+
+    /* Schaling voor Tablet */
+    @media (max-width: 992px) {
+        .header-container img { width: 50px; }
+        .header-container h1 { font-size: 1.7rem !important; }
+    }
+
+    /* Schaling voor Mobiel */
+    @media (max-width: 600px) {
+        .header-container img { width: 38px; }
+        .header-container h1 { font-size: 1.3rem !important; }
+        .header-container { gap: 10px; }
+    }
+
+    /* Bestaande UI Actiebox */
     .action-box {
         background-color: #f8f9fa;
         border-radius: 10px;
@@ -70,7 +105,7 @@ if "ingelogd" not in st.session_state:
 if not st.session_state.ingelogd:
     _, col2, _ = st.columns([1,2,1])
     with col2:
-        st.header("Voorraad glas")
+        st.header("Inloggen") # Titel aangepast naar Inloggen
         ww = st.text_input("Wachtwoord", type="password")
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
@@ -90,13 +125,18 @@ if 'show_location_grid' not in st.session_state:
 def reset_zoekopdracht():
     st.session_state.zoek_veld = ""
 
-# --- 5. HEADER ---
-col_logo, col_titel, col_logout = st.columns([0.1, 0.75, 0.15])
-with col_logo: st.image("theunissen.webp", use_container_width=True)
-with col_titel: st.title("Voorraad glas")
+# --- 5. HEADER (Logo & Titel op één lijn, schaalbaar) ---
+col_head, col_logout = st.columns([0.85, 0.15])
+with col_head:
+    st.markdown(f"""
+        <div class="header-container">
+            <img src="app/static/theunissen.webp" onerror="this.src='https://via.placeholder.com/50x50?text=Logo'">
+            <h1>Voorraad glas</h1>
+        </div>
+    """, unsafe_allow_html=True)
 with col_logout:
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    if st.button("🚪", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
 # --- 6. ZOEKFUNCTIE ---
@@ -161,7 +201,6 @@ if not geselecteerd.empty:
                 if c_no.button("ANNULEER", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
-        # Toon de Verplaats-knop en Grid alleen na klik op Locatie Wijzigen
         if st.session_state.show_location_grid:
             st.write("---")
             if st.button(f"🚀 NU VERPLAATSEN NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
