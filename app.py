@@ -19,7 +19,6 @@ def cycle_zoom():
     else:
         st.session_state.zoom_level = 100
 
-# Callback voor de wissen knop - essentieel voor stabiliteit
 def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
 
@@ -35,15 +34,26 @@ LOGO_B64 = get_base64_logo("theunissen.webp")
 
 st.markdown(f"""
     <style>
+    /* Zoom toepassing op HTML niveau */
     html {{
         zoom: {st.session_state.zoom_level}%;
+        overflow-x: auto;
     }}
-    .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
+    
+    /* Zorg dat de hoofdcontainer netjes binnen het scherm blijft */
+    .block-container {{ 
+        padding-top: 1rem; 
+        padding-bottom: 5rem;
+        max-width: 100%;
+        overflow-x: hidden;
+    }}
+    
     #MainMenu, footer, header {{visibility: hidden;}}
 
-    /* VERBETERING SCROLL-GEDRAG */
+    /* Verbetering scroll-trap in tabel en horizontale scroll toelaten */
     [data-testid="stDataEditor"] {{
         overscroll-behavior: auto !important;
+        overflow-x: auto !important;
     }}
 
     .header-left {{
@@ -51,11 +61,17 @@ st.markdown(f"""
         align-items: center;
         gap: 15px;
         height: 100%;
+        overflow: hidden;
     }}
-    .header-left img {{ width: 60px; height: auto; }}
-    .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; white-space: nowrap; }}
+    .header-left img {{ width: 60px; height: auto; flex-shrink: 0; }}
+    .header-left h1 {{ 
+        margin: 0; 
+        font-size: 1.8rem !important; 
+        font-weight: 700; 
+        white-space: nowrap; 
+    }}
 
-    /* Mobiele optimalisatie */
+    /* Mobiele optimalisatie voor titels */
     @media (max-width: 600px) {{
         .header-left img {{ width: 35px; }}
         .header-left h1 {{ font-size: 1.1rem !important; }}
@@ -73,6 +89,7 @@ st.markdown(f"""
         font-weight: 600; 
         height: 3.5em !important; 
         width: 100%;
+        white-space: nowrap;
     }}
     
     div.stButton > button[key="logout_btn"] {{
@@ -85,7 +102,13 @@ st.markdown(f"""
         border: 1px solid #dcdfe3;
     }}
 
-    .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
+    .action-box {{ 
+        background-color: #f8f9fa; 
+        border-radius: 10px; 
+        padding: 10px 15px; 
+        margin-bottom: 10px; 
+        border: 1px solid #dee2e6; 
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -142,7 +165,7 @@ if 'zoek_veld' not in st.session_state: st.session_state.zoek_veld = ""
 for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
-# --- 6. UI: HEADER SECTIE (UITGELIJND) ---
+# --- 6. UI: HEADER SECTIE ---
 h1, h2, h3 = st.columns([5, 1.5, 2])
 
 with h1:
@@ -160,7 +183,7 @@ with h3:
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
-# --- 7. ZOEKEN (UITGELIJND) ---
+# --- 7. ZOEKEN ---
 c1, c2, c3 = st.columns([5, 1.5, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
 
@@ -168,7 +191,6 @@ if c2.button("ZOEKEN", use_container_width=True):
     st.rerun()
 
 if st.session_state.zoek_veld:
-    # Gebruik callback om veilig te wissen zonder StreamlitAPIException
     c3.button("WISSEN", use_container_width=True, on_click=cb_wis_zoekveld)
 
 # Filter data
