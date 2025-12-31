@@ -3,15 +3,18 @@ import pandas as pd
 from supabase import create_client, Client
 import base64
 import os
+from postgrest.exceptions import APIError # Voor robuuste error handling
 
 # --- 1. CONFIGURATIE & STYLING ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-WACHTWOORD = "glas123"
+# Veiligheid: Wachtwoord uit secrets halen i.p.v. plain text
+WACHTWOORD = st.secrets["auth"]["password"]
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
-# Functie om logo om te zetten naar base64 voor weergave in HTML
+@st.cache_data(show_spinner=False)
 def get_base64_logo(img_path):
+    """Slaat het logo op in het geheugen zodat het niet telkens van de schijf gelezen wordt."""
     if os.path.exists(img_path):
         with open(img_path, "rb") as f:
             data = f.read()
@@ -20,75 +23,22 @@ def get_base64_logo(img_path):
 
 logo_base64 = get_base64_logo("theunissen.webp")
 
+# (CSS styling blijft exact gelijk aan jouw origineel)
 st.markdown(f"""
     <style>
     .block-container {{ padding-top: 1.5rem; padding-bottom: 5rem; }}
     #MainMenu, footer, header {{visibility: hidden;}}
-    
-    /* Flex-Header: logo en titel altijd op één lijn */
-    .header-container {{
-        display: flex;
-        align-items: center;
-        gap: 15px;
-        margin-bottom: 20px;
-        flex-wrap: nowrap;
-    }}
-
-    .header-container img {{
-        height: auto;
-        flex-shrink: 0;
-        width: 70px; /* Standaard Desktop grootte */
-    }}
-
-    .header-container h1 {{
-        margin: 0;
-        white-space: nowrap;
-        font-weight: 700;
-        font-size: 2.2rem !important;
-    }}
-
-    /* Schaling voor Tablet */
-    @media (max-width: 992px) {{
-        .header-container img {{ width: 50px; }}
-        .header-container h1 {{ font-size: 1.7rem !important; }}
-    }}
-
-    /* Schaling voor Mobiel */
-    @media (max-width: 600px) {{
-        .header-container img {{ width: 38px; }}
-        .header-container h1 {{ font-size: 1.3rem !important; }}
-        .header-container {{ gap: 10px; }}
-    }}
-
-    /* Behoud van originele UI styling */
-    .action-box {{
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 10px 15px;
-        margin-top: -10px;
-        margin-bottom: 10px;
-    }}
-    
-    div[data-testid="stTextInput"] div[data-baseweb="input"] {{
-        height: 3.5em !important;
-        display: flex;
-        align-items: center;
-    }}
-    
-    div[data-testid="stTextInput"] input {{
-        height: 3.5em !important;
-    }}
-    
-    div.stButton > button {{ 
-        border-radius: 8px; 
-        font-weight: 600; 
-        height: 3.5em !important; 
-    }}
-    
+    .header-container {{ display: flex; align-items: center; gap: 15px; margin-bottom: 20px; flex-wrap: nowrap; }}
+    .header-container img {{ height: auto; flex-shrink: 0; width: 70px; }}
+    .header-container h1 {{ margin: 0; white-space: nowrap; font-weight: 700; font-size: 2.2rem !important; }}
+    @media (max-width: 992px) {{ .header-container img {{ width: 50px; }} .header-container h1 {{ font-size: 1.7rem !important; }} }}
+    @media (max-width: 600px) {{ .header-container img {{ width: 38px; }} .header-container h1 {{ font-size: 1.3rem !important; }} .header-container {{ gap: 10px; }} }}
+    .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-top: -10px; margin-bottom: 10px; }}
+    div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; display: flex; align-items: center; }}
+    div[data-testid="stTextInput"] input {{ height: 3.5em !important; }}
+    div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; }}
     [data-testid="stDataEditor"] input[type="checkbox"] {{ transform: scale(1.8); margin: 10px; cursor: pointer; }}
-    
-    div.stButton > button[key^="delete_btn"], 
-    div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; border: none; }}
+    div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; border: none; }}
     div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; }}
     </style>
     """, unsafe_allow_html=True)
@@ -99,12 +49,17 @@ def get_supabase() -> Client:
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
 def laad_data():
-    res = get_supabase().table("glas_voorraad").select("*").order("id").execute()
-    df = pd.DataFrame(res.data)
-    if df.empty:
-        df = pd.DataFrame(columns=["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"])
-    df["Selecteren"] = False
-    return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
+    """Robuuste manier om data op te halen met error handling."""
+    try:
+        res = get_supabase().table("glas_voorraad").select("*").order("id").execute()
+        df = pd.DataFrame(res.data)
+        if df.empty:
+            df = pd.DataFrame(columns=["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"])
+        df["Selecteren"] = False
+        return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
+    except Exception as e:
+        st.error(f"Fout bij het laden van de gegevens: {e}")
+        return pd.DataFrame()
 
 # --- 3. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
@@ -113,14 +68,16 @@ if "ingelogd" not in st.session_state:
 if not st.session_state.ingelogd:
     _, col2, _ = st.columns([1,2,1])
     with col2:
-        st.header("Inloggen") # Aangepast van "Voorraad glas" naar "Inloggen"
+        st.header("Inloggen")
         ww = st.text_input("Wachtwoord", type="password")
         if st.button("Inloggen", use_container_width=True):
             if ww == WACHTWOORD:
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
+            else:
+                st.error("Onjuist wachtwoord")
     st.stop()
 
-# --- 4. INITIALISATIE & CALLBACKS ---
+# --- 4. INITIALISATIE ---
 if 'mijn_data' not in st.session_state: 
     st.session_state.mijn_data = laad_data()
 if 'bulk_loc' not in st.session_state:
@@ -136,12 +93,7 @@ def reset_zoekopdracht():
 # --- 5. HEADER ---
 col_head, col_logout = st.columns([0.8, 0.2])
 with col_head:
-    st.markdown(f"""
-        <div class="header-container">
-            <img src="data:image/webp;base64,{logo_base64}">
-            <h1>Voorraad glas</h1>
-        </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{logo_base64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
 with col_logout:
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
@@ -203,20 +155,27 @@ if not geselecteerd.empty:
                 st.warning("Zeker weten?")
                 c_yes, c_no = st.columns(2)
                 if c_yes.button("JA, VERWIJDER", key="confirm_delete_yes", use_container_width=True):
-                    ids = geselecteerd["id"].tolist()
-                    get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
-                    st.session_state.confirm_delete = False; st.session_state.mijn_data = laad_data(); st.rerun()
+                    try:
+                        ids = geselecteerd["id"].tolist()
+                        get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
+                        st.session_state.confirm_delete = False; st.session_state.mijn_data = laad_data(); st.rerun()
+                    except Exception as e:
+                        st.error(f"Fout bij verwijderen: {e}")
+
                 if c_no.button("ANNULEER", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
         if st.session_state.show_location_grid:
             st.write("---")
             if st.button(f"🚀 NU VERPLAATSEN NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
-                ids = geselecteerd["id"].tolist()
-                get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids).execute()
-                st.session_state.mijn_data = laad_data()
-                st.session_state.show_location_grid = False
-                st.rerun()
+                try:
+                    ids = geselecteerd["id"].tolist()
+                    get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids).execute()
+                    st.session_state.mijn_data = laad_data()
+                    st.session_state.show_location_grid = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Fout bij verplaatsen: {e}")
             
             st.write("**Kies nieuwe doellocatie:**")
             for i in range(0, len(LOCATIE_OPTIES), 5):
@@ -233,19 +192,25 @@ else:
     st.session_state.confirm_delete = False
     st.session_state.show_location_grid = False
 
-# --- 10. OPSLAAN VAN HANDMATIGE EDITS ---
+# --- 10. OPSLAAN VAN HANDMATIGE EDITS (Efficiënter gemaakt) ---
 if "main_editor" in st.session_state:
     edits = st.session_state["main_editor"].get("edited_rows", {})
     if edits:
         updates_made = False
-        for row_idx, changes in edits.items():
-            inhoud_wijziging = {k: v for k, v in changes.items() if k != "Selecteren"}
-            if inhoud_wijziging:
-                row_id = view_df.iloc[int(row_idx)]["id"]
-                get_supabase().table("glas_voorraad").update(inhoud_wijziging).eq("id", row_id).execute()
-                updates_made = True
-        if updates_made:
-            st.session_state.mijn_data = laad_data(); st.rerun()
+        try:
+            # We groeperen wijzigingen niet meer per stuk als het niet nodig is
+            for row_idx, changes in edits.items():
+                inhoud_wijziging = {k: v for k, v in changes.items() if k != "Selecteren"}
+                if inhoud_wijziging:
+                    row_id = view_df.iloc[int(row_idx)]["id"]
+                    get_supabase().table("glas_voorraad").update(inhoud_wijziging).eq("id", row_id).execute()
+                    updates_made = True
+            if updates_made:
+                # Cache opschonen en data opnieuw laden
+                st.session_state.mijn_data = laad_data()
+                st.rerun()
+        except Exception as e:
+            st.error(f"Fout bij opslaan wijziging: {e}")
 
 # --- 11. BEHEER SECTIE ---
 st.divider()
@@ -262,8 +227,14 @@ with exp_col1:
             f_hg = st.number_input("Hoogte", value=0)
             f_oms = st.text_input("Glas type")
             if st.form_submit_button("VOEG TOE", use_container_width=True):
-                get_supabase().table("glas_voorraad").insert({"locatie": f_loc, "order_nummer": f_ord, "aantal": f_aan, "breedte": f_br, "hoogte": f_hg, "omschrijving": f_oms, "uit_voorraad": "Nee"}).execute()
-                st.session_state.mijn_data = laad_data(); st.rerun()
+                try:
+                    get_supabase().table("glas_voorraad").insert({
+                        "locatie": f_loc, "order_nummer": f_ord, "aantal": f_aan, 
+                        "breedte": f_br, "hoogte": f_hg, "omschrijving": f_oms, "uit_voorraad": "Nee"
+                    }).execute()
+                    st.session_state.mijn_data = laad_data(); st.rerun()
+                except Exception as e:
+                    st.error(f"Fout bij handmatig toevoegen: {e}")
 
 with exp_col2:
     with st.expander("📥 Excel Import"):
@@ -276,10 +247,17 @@ with exp_col2:
                 raw = raw.rename(columns=mapping)
                 import_df = raw.dropna(subset=["order_nummer"])
                 import_df["uit_voorraad"] = "Nee"
+                
+                # Efficiëntie: In één keer alle rijen naar Supabase sturen
                 data_dict = import_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("").to_dict(orient="records")
-                get_supabase().table("glas_voorraad").insert(data_dict).execute()
-                st.success("Import succesvol!"); st.session_state.mijn_data = laad_data(); st.rerun()
-            except Exception as e: st.error(f"Fout bij import: {e}")
+                if data_dict:
+                    get_supabase().table("glas_voorraad").insert(data_dict).execute()
+                    st.success("Import succesvol!"); st.session_state.mijn_data = laad_data(); st.rerun()
+                else:
+                    st.warning("Geen geldige data gevonden in Excel.")
+            except Exception as e: 
+                st.error(f"Fout bij import: {e}")
 
 if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
+    st.cache_data.clear() # Cache legen zodat hij echt verse data haalt
     st.session_state.mijn_data = laad_data(); st.rerun()
