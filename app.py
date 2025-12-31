@@ -7,58 +7,48 @@ import os
 # --- 1. CONFIGURATIE & STYLING ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# --- ZOOM FUNCTIE INITIALISATIE ---
+# Initialiseer zoom_level in session_state VOORDAT de CSS wordt geladen
 if "zoom_level" not in st.session_state:
     st.session_state.zoom_level = "100%"
 
-WACHTWOORD = st.secrets["auth"]["password"]
-LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
-
-@st.cache_data
-def get_base64_logo(img_path):
-    if os.path.exists(img_path):
-        with open(img_path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    return ""
-
-LOGO_B64 = get_base64_logo("theunissen.webp")
-
-# Dynamische CSS voor Zoom + Bestaande Styling
+# Dynamische CSS voor Zoom (Direct bovenaan voor 1-klik respons)
 st.markdown(f"""
     <style>
     html {{
         zoom: {st.session_state.zoom_level};
+        -moz-transform: scale({st.session_state.zoom_level});
+        -moz-transform-origin: 0 0;
     }}
     .block-container {{ padding-top: 1.5rem; padding-bottom: 5rem; }}
     #MainMenu, footer, header {{visibility: hidden;}}
     .header-container {{ display: flex; align-items: center; gap: 15px; margin-bottom: 20px; flex-wrap: nowrap; }}
     .header-container img {{ height: auto; flex-shrink: 0; width: 70px; }}
     .header-container h1 {{ margin: 0; white-space: nowrap; font-weight: 700; font-size: 2.2rem !important; }}
-    @media (max-width: 992px) {{ .header-container img {{ width: 50px; }} .header-container h1 {{ font-size: 1.7rem !important; }} }}
-    @media (max-width: 600px) {{ .header-container img {{ width: 38px; }} .header-container h1 {{ font-size: 1.3rem !important; }} .header-container {{ gap: 10px; }} }}
+    
+    /* Styling voor de Zoom Selector */
+    .zoom-label {{ 
+        font-size: 0.9rem; 
+        font-weight: 600; 
+        color: #555; 
+        margin-bottom: -10px;
+    }}
+    div[data-testid="stRadio"] > div {{
+        flex-direction: row !important;
+        gap: 5px;
+    }}
+    div[data-testid="stRadio"] label {{
+        background-color: #f0f2f6;
+        padding: 2px 10px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+    }}
+    
+    /* Bestaande UI elementen */
     .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-top: -10px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
     div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
     div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; }}
     div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; }}
-    div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; }}
-    
-    /* Styling voor de Zoom Selector (Radio buttons) */
-    div[data-testid="stRadio"] > div {{
-        flex-direction: row !important;
-        gap: 10px;
-    }}
-    div[data-testid="stRadio"] label {{
-        background-color: #f0f2f6;
-        padding: 5px 15px;
-        border-radius: 5px;
-        border: 1px solid #dcdfe3;
-        cursor: pointer;
-    }}
-    div[data-testid="stRadio"] label[data-baseweb="radio"] {{
-        background-color: transparent;
-        border: none;
-        padding: 0;
-    }}
+    div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; padding: 0px 10px !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -131,20 +121,22 @@ for key in ['confirm_delete', 'show_location_grid']:
 h_col1, h_col2 = st.columns([0.7, 0.3])
 with h_col1:
     st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{LOGO_B64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
+
 with h_col2:
-    # Verbeterde Zoom functie: Horizontale radio buttons (Directe klik)
-    zoom_options = ["100%", "125%", "150%"]
-    st.session_state.zoom_level = st.radio(
-        "🔍 Zoom", 
-        zoom_options, 
-        index=zoom_options.index(st.session_state.zoom_level), 
-        horizontal=True
+    # Zoom en Uitloggen sectie
+    st.markdown('<p class="zoom-label">Beeldvergroting:</p>', unsafe_allow_html=True)
+    # Gebruik een key die direct de session_state aanstuurt voor 1-klik werking
+    st.radio(
+        "Zoom",
+        ["100%", "125%", "150%"],
+        key="zoom_level",
+        horizontal=True,
+        label_visibility="collapsed"
     )
-    
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
-# Rest van de UI (ongewijzigd)
+# Rest van de UI (volledig ongewijzigd)
 c1, c2, c3 = st.columns([5, 1, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
 
