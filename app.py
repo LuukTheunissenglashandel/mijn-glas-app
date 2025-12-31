@@ -4,10 +4,9 @@ from supabase import create_client, Client
 import base64
 import os
 
-# --- 1. CONFIGURATIE ---
+# --- 1. CONFIGURATIE & INITIALISATIE ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# Initialiseer zoom_level
 if "zoom_level" not in st.session_state:
     st.session_state.zoom_level = 100
 
@@ -22,7 +21,7 @@ def cycle_zoom():
 def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
 
-# --- 2. LOGO & STYLING ---
+# --- 2. LOGO & GEAVANCEERDE STYLING (ZOOM FIX) ---
 @st.cache_data
 def get_base64_logo(img_path):
     if os.path.exists(img_path):
@@ -34,50 +33,49 @@ LOGO_B64 = get_base64_logo("theunissen.webp")
 
 st.markdown(f"""
     <style>
-    /* Zoom toepassing op HTML niveau */
+    /* 1. Zoom op HTML niveau met overflow correctie */
     html {{
         zoom: {st.session_state.zoom_level}%;
-        overflow-x: auto;
-    }}
-    
-    /* Zorg dat de hoofdcontainer netjes binnen het scherm blijft */
-    .block-container {{ 
-        padding-top: 1rem; 
-        padding-bottom: 5rem;
-        max-width: 100%;
-        overflow-x: hidden;
-    }}
-    
-    #MainMenu, footer, header {{visibility: hidden;}}
-
-    /* Verbetering scroll-trap in tabel en horizontale scroll toelaten */
-    [data-testid="stDataEditor"] {{
-        overscroll-behavior: auto !important;
         overflow-x: auto !important;
     }}
+    
+    /* 2. Maak de Streamlit container flexibel zodat deze NIET afsnijdt */
+    .main .block-container {{ 
+        max-width: none !important;
+        width: 100% !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+        padding-top: 1rem; 
+        padding-bottom: 5rem;
+        overflow-x: visible !important;
+    }}
 
+    /* 3. Forceer de Data Editor om horizontaal te kunnen scrollen als hij te breed wordt */
+    [data-testid="stDataEditor"] {{
+        width: 100% !important;
+        overflow-x: auto !important;
+        overscroll-behavior: auto !important;
+    }}
+
+    #MainMenu, footer, header {{visibility: hidden;}}
+
+    /* Header styling */
     .header-left {{
         display: flex;
         align-items: center;
         gap: 15px;
         height: 100%;
-        overflow: hidden;
     }}
     .header-left img {{ width: 60px; height: auto; flex-shrink: 0; }}
-    .header-left h1 {{ 
-        margin: 0; 
-        font-size: 1.8rem !important; 
-        font-weight: 700; 
-        white-space: nowrap; 
-    }}
+    .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; white-space: nowrap; }}
 
-    /* Mobiele optimalisatie voor titels */
+    /* Mobiele optimalisatie */
     @media (max-width: 600px) {{
         .header-left img {{ width: 35px; }}
         .header-left h1 {{ font-size: 1.1rem !important; }}
     }}
 
-    /* EXACTE HOOGTE UITLIJNING VOOR INPUT EN BUTTONS */
+    /* Hoogte uitlijning */
     div[data-testid="stTextInput"] > div {{
         height: 3.5em !important;
     }}
@@ -102,13 +100,7 @@ st.markdown(f"""
         border: 1px solid #dcdfe3;
     }}
 
-    .action-box {{ 
-        background-color: #f8f9fa; 
-        border-radius: 10px; 
-        padding: 10px 15px; 
-        margin-bottom: 10px; 
-        border: 1px solid #dee2e6; 
-    }}
+    .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -193,7 +185,6 @@ if c2.button("ZOEKEN", use_container_width=True):
 if st.session_state.zoek_veld:
     c3.button("WISSEN", use_container_width=True, on_click=cb_wis_zoekveld)
 
-# Filter data
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
