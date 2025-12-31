@@ -7,7 +7,7 @@ import os
 # --- 1. CONFIGURATIE & INITIALISATIE ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# Callback voor veilig wissen van zoekopdracht (voorkomt API errors)
+# Callback voor veilig wissen van zoekopdracht
 def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
 
@@ -30,9 +30,20 @@ st.markdown(f"""
     
     #MainMenu, footer, header {{visibility: hidden;}}
 
-    /* Verbetering scroll-gedrag: voorkomt scroll-trap in tabel */
+    /* VERBETERING SCROLL-GEDRAG VOOR SMALLERE SCHERMEN */
     [data-testid="stDataEditor"] {{
         overscroll-behavior: auto !important;
+        /* Zorgt dat vegen op mobiel de pagina scrolt in plaats van de tabel blokkeert */
+        touch-action: pan-y !important;
+    }}
+
+    /* Mobiele aanpassingen voor tabelhoogte en header */
+    @media (max-width: 768px) {{
+        [data-testid="stDataEditor"] {{
+            max-height: 400px !important; /* Iets lager op mobiel voor beter overzicht */
+        }}
+        .header-left img {{ width: 35px; }}
+        .header-left h1 {{ font-size: 1.1rem !important; }}
     }}
 
     /* Header styling */
@@ -44,12 +55,6 @@ st.markdown(f"""
     }}
     .header-left img {{ width: 60px; height: auto; flex-shrink: 0; }}
     .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; white-space: nowrap; }}
-
-    /* Mobiele optimalisatie */
-    @media (max-width: 600px) {{
-        .header-left img {{ width: 35px; }}
-        .header-left h1 {{ font-size: 1.1rem !important; }}
-    }}
 
     /* Exacte hoogte uitlijning voor zoekveld en buttons */
     div[data-testid="stTextInput"] > div {{
@@ -129,7 +134,6 @@ for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
 # --- 6. UI: HEADER SECTIE ---
-# Behoud van de kolomstructuur voor uitlijning met de zoekbalk
 h1, h2, h3 = st.columns([5, 1.5, 2])
 
 with h1:
@@ -186,7 +190,7 @@ if not geselecteerd.empty:
             st.session_state.show_location_grid = not st.session_state.show_location_grid; st.rerun()
 
         if not st.session_state.confirm_delete:
-            if btn_col2.button("🗑️ VERWIJDEREN/MEEGENOMEN", key="delete_btn", use_container_width=True):
+            if btn_col2.button("🗑️ WISSEN", key="delete_btn", use_container_width=True):
                 st.session_state.confirm_delete = True; st.rerun()
         else:
             with btn_col2:
@@ -254,4 +258,3 @@ with ex2.expander("📥 Excel Import"):
 
 if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
     st.cache_data.clear(); st.session_state.mijn_data = laad_data_df(); st.rerun()
-
