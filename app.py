@@ -7,21 +7,11 @@ import os
 # --- 1. CONFIGURATIE & INITIALISATIE ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-if "zoom_level" not in st.session_state:
-    st.session_state.zoom_level = 100
-
-def cycle_zoom():
-    if st.session_state.zoom_level == 100:
-        st.session_state.zoom_level = 125
-    elif st.session_state.zoom_level == 125:
-        st.session_state.zoom_level = 150
-    else:
-        st.session_state.zoom_level = 100
-
+# Callback voor veilig wissen van zoekopdracht (voorkomt API errors)
 def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
 
-# --- 2. LOGO & GEAVANCEERDE STYLING (ZOOM FIX) ---
+# --- 2. LOGO & STYLING ---
 @st.cache_data
 def get_base64_logo(img_path):
     if os.path.exists(img_path):
@@ -33,31 +23,17 @@ LOGO_B64 = get_base64_logo("theunissen.webp")
 
 st.markdown(f"""
     <style>
-    /* 1. Zoom op HTML niveau met overflow correctie */
-    html {{
-        zoom: {st.session_state.zoom_level}%;
-        overflow-x: auto !important;
-    }}
-    
-    /* 2. Maak de Streamlit container flexibel zodat deze NIET afsnijdt */
-    .main .block-container {{ 
-        max-width: none !important;
-        width: 100% !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
+    .block-container {{ 
         padding-top: 1rem; 
         padding-bottom: 5rem;
-        overflow-x: visible !important;
     }}
+    
+    #MainMenu, footer, header {{visibility: hidden;}}
 
-    /* 3. Forceer de Data Editor om horizontaal te kunnen scrollen als hij te breed wordt */
+    /* Verbetering scroll-gedrag: voorkomt scroll-trap in tabel */
     [data-testid="stDataEditor"] {{
-        width: 100% !important;
-        overflow-x: auto !important;
         overscroll-behavior: auto !important;
     }}
-
-    #MainMenu, footer, header {{visibility: hidden;}}
 
     /* Header styling */
     .header-left {{
@@ -75,7 +51,7 @@ st.markdown(f"""
         .header-left h1 {{ font-size: 1.1rem !important; }}
     }}
 
-    /* Hoogte uitlijning */
+    /* Exacte hoogte uitlijning voor zoekveld en buttons */
     div[data-testid="stTextInput"] > div {{
         height: 3.5em !important;
     }}
@@ -93,11 +69,6 @@ st.markdown(f"""
     div.stButton > button[key="logout_btn"] {{
         background-color: #ff4b4b;
         color: white;
-    }}
-
-    div.stButton > button[key="zoom_btn"] {{
-        background-color: #f0f2f6;
-        border: 1px solid #dcdfe3;
     }}
 
     .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
@@ -158,6 +129,7 @@ for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
 # --- 6. UI: HEADER SECTIE ---
+# Behoud van de kolomstructuur voor uitlijning met de zoekbalk
 h1, h2, h3 = st.columns([5, 1.5, 2])
 
 with h1:
@@ -167,9 +139,6 @@ with h1:
             <h1>Voorraad glas</h1>
         </div>
     """, unsafe_allow_html=True)
-
-with h2:
-    st.button(f"🔍 {st.session_state.zoom_level}%", key="zoom_btn", on_click=cycle_zoom, use_container_width=True)
 
 with h3:
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
@@ -185,6 +154,7 @@ if c2.button("ZOEKEN", use_container_width=True):
 if st.session_state.zoek_veld:
     c3.button("WISSEN", use_container_width=True, on_click=cb_wis_zoekveld)
 
+# Filter data
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
