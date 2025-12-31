@@ -186,7 +186,7 @@ if not geselecteerd.empty:
             st.session_state.show_location_grid = not st.session_state.show_location_grid; st.rerun()
 
         if not st.session_state.confirm_delete:
-            if btn_col2.button("🗑️ WISSEN", key="delete_btn", use_container_width=True):
+            if btn_col2.button("🗑️ VERWIJDEREN/MEEGENOMEN", key="delete_btn", use_container_width=True):
                 st.session_state.confirm_delete = True; st.rerun()
         else:
             with btn_col2:
@@ -254,3 +254,4 @@ with ex2.expander("📥 Excel Import"):
 
 if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
     st.cache_data.clear(); st.session_state.mijn_data = laad_data_df(); st.rerun()
+
