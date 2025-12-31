@@ -19,6 +19,7 @@ def cycle_zoom():
     else:
         st.session_state.zoom_level = 100
 
+# Callback voor de wissen knop - essentieel voor stabiliteit
 def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
 
@@ -39,6 +40,11 @@ st.markdown(f"""
     }}
     .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
     #MainMenu, footer, header {{visibility: hidden;}}
+
+    /* VERBETERING SCROLL-GEDRAG */
+    [data-testid="stDataEditor"] {{
+        overscroll-behavior: auto !important;
+    }}
 
     .header-left {{
         display: flex;
@@ -136,7 +142,7 @@ if 'zoek_veld' not in st.session_state: st.session_state.zoek_veld = ""
 for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
-# --- 6. UI: HEADER SECTIE ---
+# --- 6. UI: HEADER SECTIE (UITGELIJND) ---
 h1, h2, h3 = st.columns([5, 1.5, 2])
 
 with h1:
@@ -154,7 +160,7 @@ with h3:
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
-# --- 7. ZOEKEN ---
+# --- 7. ZOEKEN (UITGELIJND) ---
 c1, c2, c3 = st.columns([5, 1.5, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
 
@@ -162,6 +168,7 @@ if c2.button("ZOEKEN", use_container_width=True):
     st.rerun()
 
 if st.session_state.zoek_veld:
+    # Gebruik callback om veilig te wissen zonder StreamlitAPIException
     c3.button("WISSEN", use_container_width=True, on_click=cb_wis_zoekveld)
 
 # Filter data
