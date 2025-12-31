@@ -68,7 +68,7 @@ def laad_data_df():
     df["Selecteren"] = False
     return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
 
-# --- 3. CALLBACK FUNCTIES (Stabiliteit) ---
+# --- 3. CALLBACK FUNCTIES ---
 def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
 
@@ -109,10 +109,16 @@ with h_col2:
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
-c1, c2, c3 = st.columns([6, 1, 1])
+# Aanpassing: Kolomverhouding licht gewijzigd om langere tekst te accommoderen
+c1, c2, c3 = st.columns([5, 1, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
-if c2.button("ZOEKEN", use_container_width=True): st.rerun()
-c3.button("WISSEN", use_container_width=True, on_click=cb_wis_zoekveld)
+
+if c2.button("ZOEKEN", use_container_width=True): 
+    st.rerun()
+
+# Aanpassing: Knop toont alleen bij actieve zoekopdracht en heeft nieuwe tekst
+if st.session_state.zoek_veld:
+    c3.button("Zoekopdracht wissen", use_container_width=True, on_click=cb_wis_zoekveld)
 
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
@@ -141,7 +147,6 @@ if not geselecteerd.empty:
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
         btn_col1, btn_col2 = st.columns(2)
         
-        # Verbeterde sluit-knop met callback
         btn_col1.button("📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT", 
                         use_container_width=True, on_click=cb_toggle_grid)
 
@@ -166,13 +171,12 @@ if not geselecteerd.empty:
             
             cols = st.columns(5)
             for i, loc in enumerate(LOCATIE_OPTIES):
-                # Locatie buttons gebruiken nu ook callbacks voor betere stabiliteit
                 cols[i % 5].button(loc, key=f"g_{loc}", use_container_width=True, 
                                    type="primary" if st.session_state.bulk_loc == loc else "secondary",
                                    on_click=cb_set_bulk_loc, args=(loc,))
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 9. IN-LINE EDITS (Nu zonder onbedoelde reloads bij checkbox) ---
+# --- 9. IN-LINE EDITS ---
 edits = st.session_state.main_editor.get("edited_rows", {})
 if edits:
     any_actual_change = False
