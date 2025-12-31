@@ -19,7 +19,6 @@ def cycle_zoom():
     else:
         st.session_state.zoom_level = 100
 
-# Callback voor wissen om de error te voorkomen
 def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
 
@@ -56,7 +55,13 @@ st.markdown(f"""
         .header-left h1 {{ font-size: 1.1rem !important; }}
     }}
 
-    /* Button heights gelijk trekken aan inputs */
+    /* EXACTE HOOGTE UITLIJNING VOOR INPUT EN BUTTONS */
+    div[data-testid="stTextInput"] > div {{
+        height: 3.5em !important;
+    }}
+    div[data-testid="stTextInput"] div[data-baseweb="input"] {{
+        height: 3.5em !important;
+    }}
     div.stButton > button {{ 
         border-radius: 8px; 
         font-weight: 600; 
@@ -131,8 +136,7 @@ if 'zoek_veld' not in st.session_state: st.session_state.zoek_veld = ""
 for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
-# --- 6. UI: HEADER SECTIE (UITGELIJND) ---
-# Dezelfde kolomverhouding als de zoekbalk voor perfecte uitlijning
+# --- 6. UI: HEADER SECTIE ---
 h1, h2, h3 = st.columns([5, 1.5, 2])
 
 with h1:
@@ -150,7 +154,7 @@ with h3:
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
-# --- 7. ZOEKEN (UITGELIJND) ---
+# --- 7. ZOEKEN ---
 c1, c2, c3 = st.columns([5, 1.5, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
 
@@ -242,7 +246,7 @@ with ex1.expander("➕ Nieuwe Ruit"):
             "uit_voorraad": "Nee"
         }
         if st.form_submit_button("VOEG TOE", use_container_width=True):
-            db_query("insert", data=f)
+            db_query("insert", f)
             st.session_state.mijn_data = laad_data_df(); st.rerun()
 
 with ex2.expander("📥 Excel Import"):
