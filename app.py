@@ -7,7 +7,7 @@ import os
 # --- 1. CONFIGURATIE & INITIALISATIE ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# Callback voor veilig wissen van zoekopdracht
+# Callback voor veilig wissen van zoekopdracht (voorkomt API errors)
 def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
 
@@ -30,17 +30,16 @@ st.markdown(f"""
     
     #MainMenu, footer, header {{visibility: hidden;}}
 
-    /* VERBETERING SCROLL-GEDRAG VOOR SMALLERE SCHERMEN */
+    /* Verbetering scroll-gedrag: voorkomt scroll-trap in tabel */
     [data-testid="stDataEditor"] {{
         overscroll-behavior: auto !important;
-        /* Zorgt dat vegen op mobiel de pagina scrolt in plaats van de tabel blokkeert */
         touch-action: pan-y !important;
     }}
 
     /* Mobiele aanpassingen voor tabelhoogte en header */
     @media (max-width: 768px) {{
         [data-testid="stDataEditor"] {{
-            max-height: 400px !important; /* Iets lager op mobiel voor beter overzicht */
+            max-height: 400px !important;
         }}
         .header-left img {{ width: 35px; }}
         .header-left h1 {{ font-size: 1.1rem !important; }}
@@ -190,7 +189,7 @@ if not geselecteerd.empty:
             st.session_state.show_location_grid = not st.session_state.show_location_grid; st.rerun()
 
         if not st.session_state.confirm_delete:
-            if btn_col2.button("🗑️ WISSEN", key="delete_btn", use_container_width=True):
+            if btn_col2.button("🗑️ MEEGENOMEN", key="delete_btn", use_container_width=True):
                 st.session_state.confirm_delete = True; st.rerun()
         else:
             with btn_col2:
@@ -240,7 +239,7 @@ with ex1.expander("➕ Nieuwe Ruit"):
             "uit_voorraad": "Nee"
         }
         if st.form_submit_button("VOEG TOE", use_container_width=True):
-            db_query("insert", f)
+            db_query("insert", data=f)
             st.session_state.mijn_data = laad_data_df(); st.rerun()
 
 with ex2.expander("📥 Excel Import"):
@@ -252,7 +251,7 @@ with ex2.expander("📥 Excel Import"):
             df_up = df_up.rename(columns={"order": "order_nummer"}).dropna(subset=["order_nummer"])
             df_up["uit_voorraad"] = "Nee"
             data_dict = df_up[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("").to_dict(orient="records")
-            db_query("insert", data_dict)
+            db_query("insert", data=data_dict)
             st.success("Succes!"); st.session_state.mijn_data = laad_data_df(); st.rerun()
         except Exception as e: st.error(f"Fout: {e}")
 
