@@ -37,7 +37,7 @@ st.markdown(f"""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DATABASE ENGINE (CLEAN & ROBUUST) ---
+# --- 2. DATABASE ENGINE ---
 @st.cache_resource
 def init_connection():
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
@@ -45,7 +45,6 @@ def init_connection():
 supabase = init_connection()
 
 def db_query(action, table="glas_voorraad", data=None, filters=None):
-    """Eén centrale plek voor alle database acties met error handling."""
     try:
         query = supabase.table(table)
         if action == "select":
@@ -70,7 +69,11 @@ def laad_data_df():
     df["Selecteren"] = False
     return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
 
-# --- 3. AUTHENTICATIE ---
+# --- 3. CALLBACK FUNCTIES (Oplossing voor de error) ---
+def reset_zoekveld():
+    st.session_state.zoek_veld = ""
+
+# --- 4. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = st.query_params.get("auth") == "true"
 
@@ -78,20 +81,22 @@ if not st.session_state.ingelogd:
     _, col, _ = st.columns([1,2,1])
     with col:
         st.header("Inloggen")
-        if st.text_input("Wachtwoord", type="password") == WACHTWOORD:
-            if st.button("Inloggen", use_container_width=True):
+        input_pass = st.text_input("Wachtwoord", type="password")
+        if st.button("Inloggen", use_container_width=True):
+            if input_pass == WACHTWOORD:
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
-        elif st.button("Inloggen", use_container_width=True):
-            st.error("Wachtwoord onjuist")
+            else:
+                st.error("Wachtwoord onjuist")
     st.stop()
 
-# --- 4. STATE MANAGEMENT ---
+# --- 5. STATE MANAGEMENT ---
 if 'mijn_data' not in st.session_state: st.session_state.mijn_data = laad_data_df()
 if 'bulk_loc' not in st.session_state: st.session_state.bulk_loc = "HK"
+if 'zoek_veld' not in st.session_state: st.session_state.zoek_veld = ""
 for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
-# --- 5. UI: HEADER & ZOEKEN ---
+# --- 6. UI: HEADER & ZOEKEN ---
 h_col1, h_col2 = st.columns([0.8, 0.2])
 with h_col1:
     st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{LOGO_B64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
@@ -100,17 +105,22 @@ with h_col2:
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
 c1, c2, c3 = st.columns([6, 1, 1])
+# De widget gebruikt 'zoek_veld' als key
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
-if c2.button("ZOEKEN", use_container_width=True): st.rerun()
-if c3.button("WISSEN", use_container_width=True):
-    st.session_state.zoek_veld = ""; st.rerun()
+
+if c2.button("ZOEKEN", use_container_width=True): 
+    st.rerun()
+
+# DE FIX: Gebruik 'on_click' callback in plaats van directe state aanpassing na de button
+if c3.button("WISSEN", use_container_width=True, on_click=reset_zoekveld):
+    pass # De rerun gebeurt automatisch door de callback
 
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 6. DATA EDITOR ---
+# --- 7. DATA EDITOR ---
 actie_houder = st.container()
 edited_df = st.data_editor(
     view_df,
@@ -123,7 +133,7 @@ edited_df = st.data_editor(
     hide_index=True, use_container_width=True, key="main_editor", height=500
 )
 
-# --- 7. ACTIES (Batch Verwerking) ---
+# --- 8. ACTIES (Batch Verwerking) ---
 geselecteerd = edited_df[edited_df["Selecteren"]]
 ids_to_act = geselecteerd["id"].tolist()
 
@@ -160,7 +170,7 @@ if not geselecteerd.empty:
                     st.session_state.bulk_loc = loc; st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 8. IN-LINE EDITS ---
+# --- 9. IN-LINE EDITS ---
 edits = st.session_state.main_editor.get("edited_rows", {})
 if edits:
     for row_idx, changes in edits.items():
@@ -170,7 +180,7 @@ if edits:
             db_query("update", data=clean_changes, filters=row_id)
     st.session_state.mijn_data = laad_data_df(); st.rerun()
 
-# --- 9. BEHEER & IMPORT ---
+# --- 10. BEHEER & IMPORT ---
 st.divider()
 ex1, ex2 = st.columns(2)
 with ex1.expander("➕ Nieuwe Ruit"):
