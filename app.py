@@ -42,8 +42,23 @@ st.markdown(f"""
     div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; }}
     div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; }}
     
-    /* Zorg dat de zoom selector compact is */
-    div[data-testid="stSelectbox"] label {{ display: none; }}
+    /* Styling voor de Zoom Selector (Radio buttons) */
+    div[data-testid="stRadio"] > div {{
+        flex-direction: row !important;
+        gap: 10px;
+    }}
+    div[data-testid="stRadio"] label {{
+        background-color: #f0f2f6;
+        padding: 5px 15px;
+        border-radius: 5px;
+        border: 1px solid #dcdfe3;
+        cursor: pointer;
+    }}
+    div[data-testid="stRadio"] label[data-baseweb="radio"] {{
+        background-color: transparent;
+        border: none;
+        padding: 0;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -113,13 +128,18 @@ for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
 # --- 6. UI: HEADER & ZOEKEN ---
-h_col1, h_col2 = st.columns([0.8, 0.2])
+h_col1, h_col2 = st.columns([0.7, 0.3])
 with h_col1:
     st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{LOGO_B64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
 with h_col2:
-    # Zoom selector direct boven de uitlogknop
+    # Verbeterde Zoom functie: Horizontale radio buttons (Directe klik)
     zoom_options = ["100%", "125%", "150%"]
-    st.session_state.zoom_level = st.selectbox("Zoom", zoom_options, index=zoom_options.index(st.session_state.zoom_level), label_visibility="collapsed")
+    st.session_state.zoom_level = st.radio(
+        "🔍 Zoom", 
+        zoom_options, 
+        index=zoom_options.index(st.session_state.zoom_level), 
+        horizontal=True
+    )
     
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
