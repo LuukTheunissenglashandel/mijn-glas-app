@@ -7,11 +7,19 @@ import os
 # --- 1. CONFIGURATIE ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# Initialiseer zoom_level direct
+# --- 2. ZOOM LOGICA (Cyclet door 100, 125, 150) ---
 if "zoom_level" not in st.session_state:
-    st.session_state.zoom_level = "100%"
+    st.session_state.zoom_level = 100
 
-# --- 2. LOGO VERWERKING (Vóór de UI aanroepen) ---
+def cycle_zoom():
+    if st.session_state.zoom_level == 100:
+        st.session_state.zoom_level = 125
+    elif st.session_state.zoom_level == 125:
+        st.session_state.zoom_level = 150
+    else:
+        st.session_state.zoom_level = 100
+
+# --- 3. LOGO & STYLING ---
 @st.cache_data
 def get_base64_logo(img_path):
     if os.path.exists(img_path):
@@ -21,28 +29,66 @@ def get_base64_logo(img_path):
 
 LOGO_B64 = get_base64_logo("theunissen.webp")
 
-# --- 3. STYLING & ZOOM CSS ---
 st.markdown(f"""
     <style>
+    /* Zoom toepassing op de gehele pagina */
     html {{
-        zoom: {st.session_state.zoom_level};
+        zoom: {st.session_state.zoom_level}%;
     }}
-    .block-container {{ padding-top: 1.5rem; padding-bottom: 5rem; }}
-    #MainMenu, footer, header {{visibility: hidden;}}
-    .header-container {{ display: flex; align-items: center; gap: 15px; margin-bottom: 20px; flex-wrap: nowrap; }}
-    .header-container img {{ height: auto; flex-shrink: 0; width: 70px; }}
-    .header-container h1 {{ margin: 0; white-space: nowrap; font-weight: 700; font-size: 2.2rem !important; }}
-    @media (max-width: 992px) {{ .header-container img {{ width: 50px; }} .header-container h1 {{ font-size: 1.7rem !important; }} }}
-    @media (max-width: 600px) {{ .header-container img {{ width: 38px; }} .header-container h1 {{ font-size: 1.3rem !important; }} .header-container {{ gap: 10px; }} }}
-    .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-top: -10px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
-    div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
-    div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; }}
-    div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; }}
-    div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; }}
     
-    /* Zoom Radio Styling */
-    div[data-testid="stRadio"] > div {{ flex-direction: row !important; gap: 10px; }}
-    div[data-testid="stRadio"] label {{ background-color: #f0f2f6; padding: 2px 12px; border-radius: 5px; border: 1px solid #ddd; cursor: pointer; }}
+    .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
+    #MainMenu, footer, header {{visibility: hidden;}}
+
+    /* Header Layout Container */
+    .custom-header {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        gap: 10px;
+    }}
+
+    .header-left {{
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }}
+
+    .header-left img {{ width: 60px; height: auto; }}
+    .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; white-space: nowrap; }}
+
+    .header-right {{
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }}
+
+    /* Mobiele optimalisatie voor Header */
+    @media (max-width: 600px) {{
+        .header-left img {{ width: 40px; }}
+        .header-left h1 {{ font-size: 1.2rem !important; }}
+        .custom-header {{ flex-direction: row; justify-content: space-between; }}
+    }}
+
+    /* Button Styling */
+    div.stButton > button {{ border-radius: 8px; font-weight: 600; }}
+    
+    /* Logout button specifieke styling */
+    div.stButton > button[key="logout_btn"] {{
+        background-color: #ff4b4b;
+        color: white;
+        height: 2.8em !important;
+        padding: 0 15px !important;
+    }}
+
+    /* Zoom button specifieke styling */
+    div.stButton > button[key="zoom_btn"] {{
+        background-color: #f0f2f6;
+        height: 2.8em !important;
+        border: 1px solid #dcdfe3;
+    }}
+
+    .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -59,17 +105,13 @@ supabase = init_connection()
 def db_query(action, table="glas_voorraad", data=None, filters=None):
     try:
         query = supabase.table(table)
-        if action == "select":
-            res = query.select("*").order("id").execute()
-        elif action == "insert":
-            res = query.insert(data).execute()
-        elif action == "update":
-            res = query.update(data).in_("id", filters).execute()
-        elif action == "delete":
-            res = query.delete().in_("id", filters).execute()
+        if action == "select": res = query.select("*").order("id").execute()
+        elif action == "insert": res = query.insert(data).execute()
+        elif action == "update": res = query.update(data).in_("id", filters).execute()
+        elif action == "delete": res = query.delete().in_("id", filters).execute()
         return res.data
     except Exception as e:
-        st.error(f"Database fout ({action}): {e}")
+        st.error(f"Database fout: {e}")
         return None
 
 def laad_data_df():
@@ -81,11 +123,7 @@ def laad_data_df():
     df["Selecteren"] = False
     return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
 
-# --- 5. CALLBACKS & AUTH ---
-def cb_wis_zoekveld(): st.session_state.zoek_veld = ""
-def cb_toggle_grid(): st.session_state.show_location_grid = not st.session_state.show_location_grid
-def cb_set_bulk_loc(loc): st.session_state.bulk_loc = loc
-
+# --- 5. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = st.query_params.get("auth") == "true"
 
@@ -107,28 +145,43 @@ if 'zoek_veld' not in st.session_state: st.session_state.zoek_veld = ""
 for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
-# --- 7. UI: HEADER ---
-h_col1, h_col2 = st.columns([0.7, 0.3])
-with h_col1:
-    st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{LOGO_B64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
-with h_col2:
-    # Zoom Direct (1-klik oplossing)
-    st.radio("Zoom", ["100%", "125%", "150%"], key="zoom_level", horizontal=True, label_visibility="collapsed")
-    if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
-        st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
+# --- 7. UI: HEADER SECTIE ---
+# We gebruiken HTML voor de links-uitlijning en st.columns voor de knoppen-uitlijning rechts
+head_left, head_right = st.columns([0.6, 0.4])
 
-# --- 8. ZOEKEN & TABEL ---
-c1, c2, c3 = st.columns([5, 1, 2])
+with head_left:
+    st.markdown(f"""
+        <div class="header-left">
+            <img src="data:image/webp;base64,{LOGO_B64}">
+            <h1>Voorraad glas</h1>
+        </div>
+    """, unsafe_allow_html=True)
+
+with head_right:
+    # Knoppen naast elkaar rechts bovenin
+    z_col, l_col = st.columns([1, 1])
+    with z_col:
+        zoom_label = f"🔍 {st.session_state.zoom_level}%"
+        st.button(zoom_label, key="zoom_btn", on_click=cycle_zoom, use_container_width=True)
+    with l_col:
+        if st.button("🚪 UITLOG", key="logout_btn", use_container_width=True):
+            st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
+
+# --- 8. ZOEKEN ---
+c1, c2, c3 = st.columns([5, 1.5, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
 if c2.button("ZOEKEN", use_container_width=True): st.rerun()
 if st.session_state.zoek_veld:
-    c3.button("Zoekopdracht wissen", use_container_width=True, on_click=cb_wis_zoekveld)
+    if c3.button("WISSEN", use_container_width=True):
+        st.session_state.zoek_veld = ""; st.rerun()
 
+# Filter data
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
+# --- 9. DATA EDITOR ---
 actie_houder = st.container()
 edited_df = st.data_editor(
     view_df,
@@ -141,7 +194,7 @@ edited_df = st.data_editor(
     hide_index=True, use_container_width=True, key="main_editor", height=500
 )
 
-# --- 9. BATCH ACTIES ---
+# --- 10. BATCH ACTIES ---
 geselecteerd = edited_df[edited_df["Selecteren"]]
 ids_to_act = geselecteerd["id"].tolist()
 
@@ -149,14 +202,16 @@ if not geselecteerd.empty:
     with actie_houder:
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
         btn_col1, btn_col2 = st.columns(2)
-        btn_col1.button("📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT", use_container_width=True, on_click=cb_toggle_grid)
+        
+        if btn_col1.button("📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT", use_container_width=True):
+            st.session_state.show_location_grid = not st.session_state.show_location_grid; st.rerun()
 
         if not st.session_state.confirm_delete:
-            if btn_col2.button("🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
+            if btn_col2.button("🗑️ WISSEN", key="delete_btn", use_container_width=True):
                 st.session_state.confirm_delete = True; st.rerun()
         else:
             with btn_col2:
-                st.warning("Zeker weten?")
+                st.warning("Zeker?")
                 cy, cn = st.columns(2)
                 if cy.button("JA", key="confirm_delete_yes", use_container_width=True):
                     db_query("delete", filters=ids_to_act)
@@ -171,10 +226,11 @@ if not geselecteerd.empty:
                 st.session_state.show_location_grid = False; st.session_state.mijn_data = laad_data_df(); st.rerun()
             cols = st.columns(5)
             for i, loc in enumerate(LOCATIE_OPTIES):
-                cols[i % 5].button(loc, key=f"g_{loc}", use_container_width=True, type="primary" if st.session_state.bulk_loc == loc else "secondary", on_click=cb_set_bulk_loc, args=(loc,))
+                if cols[i % 5].button(loc, key=f"g_{loc}", use_container_width=True, type="primary" if st.session_state.bulk_loc == loc else "secondary"):
+                    st.session_state.bulk_loc = loc; st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 10. EDITS & IMPORT ---
+# --- 11. IN-LINE EDITS ---
 edits = st.session_state.main_editor.get("edited_rows", {})
 if edits:
     any_actual_change = False
@@ -186,6 +242,7 @@ if edits:
             db_query("update", data=clean_changes, filters=row_id)
     if any_actual_change: st.session_state.mijn_data = laad_data_df(); st.rerun()
 
+# --- 12. BEHEER ---
 st.divider()
 ex1, ex2 = st.columns(2)
 with ex1.expander("➕ Nieuwe Ruit"):
