@@ -7,6 +7,10 @@ import os
 # --- 1. CONFIGURATIE & STYLING ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
+# --- ZOOM FUNCTIE INITIALISATIE ---
+if "zoom_level" not in st.session_state:
+    st.session_state.zoom_level = "100%"
+
 WACHTWOORD = st.secrets["auth"]["password"]
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
@@ -19,8 +23,12 @@ def get_base64_logo(img_path):
 
 LOGO_B64 = get_base64_logo("theunissen.webp")
 
+# Dynamische CSS voor Zoom + Bestaande Styling
 st.markdown(f"""
     <style>
+    html {{
+        zoom: {st.session_state.zoom_level};
+    }}
     .block-container {{ padding-top: 1.5rem; padding-bottom: 5rem; }}
     #MainMenu, footer, header {{visibility: hidden;}}
     .header-container {{ display: flex; align-items: center; gap: 15px; margin-bottom: 20px; flex-wrap: nowrap; }}
@@ -33,6 +41,9 @@ st.markdown(f"""
     div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; }}
     div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; }}
     div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; }}
+    
+    /* Zorg dat de zoom selector compact is */
+    div[data-testid="stSelectbox"] label {{ display: none; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -106,17 +117,20 @@ h_col1, h_col2 = st.columns([0.8, 0.2])
 with h_col1:
     st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{LOGO_B64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
 with h_col2:
+    # Zoom selector direct boven de uitlogknop
+    zoom_options = ["100%", "125%", "150%"]
+    st.session_state.zoom_level = st.selectbox("Zoom", zoom_options, index=zoom_options.index(st.session_state.zoom_level), label_visibility="collapsed")
+    
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
-# Aanpassing: Kolomverhouding licht gewijzigd om langere tekst te accommoderen
+# Rest van de UI (ongewijzigd)
 c1, c2, c3 = st.columns([5, 1, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
 
 if c2.button("ZOEKEN", use_container_width=True): 
     st.rerun()
 
-# Aanpassing: Knop toont alleen bij actieve zoekopdracht en heeft nieuwe tekst
 if st.session_state.zoek_veld:
     c3.button("Zoekopdracht wissen", use_container_width=True, on_click=cb_wis_zoekveld)
 
