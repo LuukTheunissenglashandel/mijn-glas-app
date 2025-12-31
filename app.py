@@ -7,7 +7,7 @@ import os
 # --- 1. CONFIGURATIE ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# --- 2. ZOOM LOGICA (Cyclet door 100, 125, 150) ---
+# Initialiseer zoom_level
 if "zoom_level" not in st.session_state:
     st.session_state.zoom_level = 100
 
@@ -19,7 +19,11 @@ def cycle_zoom():
     else:
         st.session_state.zoom_level = 100
 
-# --- 3. LOGO & STYLING ---
+# Callback voor wissen om de error te voorkomen
+def cb_wis_zoekveld():
+    st.session_state.zoek_veld = ""
+
+# --- 2. LOGO & STYLING ---
 @st.cache_data
 def get_base64_logo(img_path):
     if os.path.exists(img_path):
@@ -31,60 +35,42 @@ LOGO_B64 = get_base64_logo("theunissen.webp")
 
 st.markdown(f"""
     <style>
-    /* Zoom toepassing op de gehele pagina */
     html {{
         zoom: {st.session_state.zoom_level}%;
     }}
-    
     .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
     #MainMenu, footer, header {{visibility: hidden;}}
-
-    /* Header Layout Container */
-    .custom-header {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-        gap: 10px;
-    }}
 
     .header-left {{
         display: flex;
         align-items: center;
         gap: 15px;
+        height: 100%;
     }}
-
     .header-left img {{ width: 60px; height: auto; }}
     .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; white-space: nowrap; }}
 
-    .header-right {{
-        display: flex;
-        gap: 8px;
-        align-items: center;
-    }}
-
-    /* Mobiele optimalisatie voor Header */
+    /* Mobiele optimalisatie */
     @media (max-width: 600px) {{
-        .header-left img {{ width: 40px; }}
-        .header-left h1 {{ font-size: 1.2rem !important; }}
-        .custom-header {{ flex-direction: row; justify-content: space-between; }}
+        .header-left img {{ width: 35px; }}
+        .header-left h1 {{ font-size: 1.1rem !important; }}
     }}
 
-    /* Button Styling */
-    div.stButton > button {{ border-radius: 8px; font-weight: 600; }}
+    /* Button heights gelijk trekken aan inputs */
+    div.stButton > button {{ 
+        border-radius: 8px; 
+        font-weight: 600; 
+        height: 3.5em !important; 
+        width: 100%;
+    }}
     
-    /* Logout button specifieke styling */
     div.stButton > button[key="logout_btn"] {{
         background-color: #ff4b4b;
         color: white;
-        height: 2.8em !important;
-        padding: 0 15px !important;
     }}
 
-    /* Zoom button specifieke styling */
     div.stButton > button[key="zoom_btn"] {{
         background-color: #f0f2f6;
-        height: 2.8em !important;
         border: 1px solid #dcdfe3;
     }}
 
@@ -92,7 +78,7 @@ st.markdown(f"""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. DATABASE ENGINE ---
+# --- 3. DATABASE ENGINE ---
 WACHTWOORD = st.secrets["auth"]["password"]
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
@@ -123,7 +109,7 @@ def laad_data_df():
     df["Selecteren"] = False
     return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
 
-# --- 5. AUTHENTICATIE ---
+# --- 4. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = st.query_params.get("auth") == "true"
 
@@ -138,18 +124,18 @@ if not st.session_state.ingelogd:
             else: st.error("Wachtwoord onjuist")
     st.stop()
 
-# --- 6. STATE MANAGEMENT ---
+# --- 5. STATE MANAGEMENT ---
 if 'mijn_data' not in st.session_state: st.session_state.mijn_data = laad_data_df()
 if 'bulk_loc' not in st.session_state: st.session_state.bulk_loc = "HK"
 if 'zoek_veld' not in st.session_state: st.session_state.zoek_veld = ""
 for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
-# --- 7. UI: HEADER SECTIE ---
-# We gebruiken HTML voor de links-uitlijning en st.columns voor de knoppen-uitlijning rechts
-head_left, head_right = st.columns([0.6, 0.4])
+# --- 6. UI: HEADER SECTIE (UITGELIJND) ---
+# Dezelfde kolomverhouding als de zoekbalk voor perfecte uitlijning
+h1, h2, h3 = st.columns([5, 1.5, 2])
 
-with head_left:
+with h1:
     st.markdown(f"""
         <div class="header-left">
             <img src="data:image/webp;base64,{LOGO_B64}">
@@ -157,23 +143,22 @@ with head_left:
         </div>
     """, unsafe_allow_html=True)
 
-with head_right:
-    # Knoppen naast elkaar rechts bovenin
-    z_col, l_col = st.columns([1, 1])
-    with z_col:
-        zoom_label = f"🔍 {st.session_state.zoom_level}%"
-        st.button(zoom_label, key="zoom_btn", on_click=cycle_zoom, use_container_width=True)
-    with l_col:
-        if st.button("🚪 UITLOG", key="logout_btn", use_container_width=True):
-            st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
+with h2:
+    st.button(f"🔍 {st.session_state.zoom_level}%", key="zoom_btn", on_click=cycle_zoom, use_container_width=True)
 
-# --- 8. ZOEKEN ---
+with h3:
+    if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
+        st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
+
+# --- 7. ZOEKEN (UITGELIJND) ---
 c1, c2, c3 = st.columns([5, 1.5, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
-if c2.button("ZOEKEN", use_container_width=True): st.rerun()
+
+if c2.button("ZOEKEN", use_container_width=True): 
+    st.rerun()
+
 if st.session_state.zoek_veld:
-    if c3.button("WISSEN", use_container_width=True):
-        st.session_state.zoek_veld = ""; st.rerun()
+    c3.button("WISSEN", use_container_width=True, on_click=cb_wis_zoekveld)
 
 # Filter data
 view_df = st.session_state.mijn_data.copy()
@@ -181,7 +166,7 @@ if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 9. DATA EDITOR ---
+# --- 8. DATA EDITOR ---
 actie_houder = st.container()
 edited_df = st.data_editor(
     view_df,
@@ -194,7 +179,7 @@ edited_df = st.data_editor(
     hide_index=True, use_container_width=True, key="main_editor", height=500
 )
 
-# --- 10. BATCH ACTIES ---
+# --- 9. BATCH ACTIES ---
 geselecteerd = edited_df[edited_df["Selecteren"]]
 ids_to_act = geselecteerd["id"].tolist()
 
@@ -230,7 +215,7 @@ if not geselecteerd.empty:
                     st.session_state.bulk_loc = loc; st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 11. IN-LINE EDITS ---
+# --- 10. IN-LINE EDITS ---
 edits = st.session_state.main_editor.get("edited_rows", {})
 if edits:
     any_actual_change = False
@@ -242,7 +227,7 @@ if edits:
             db_query("update", data=clean_changes, filters=row_id)
     if any_actual_change: st.session_state.mijn_data = laad_data_df(); st.rerun()
 
-# --- 12. BEHEER ---
+# --- 11. BEHEER ---
 st.divider()
 ex1, ex2 = st.columns(2)
 with ex1.expander("➕ Nieuwe Ruit"):
@@ -269,7 +254,7 @@ with ex2.expander("📥 Excel Import"):
             df_up = df_up.rename(columns={"order": "order_nummer"}).dropna(subset=["order_nummer"])
             df_up["uit_voorraad"] = "Nee"
             data_dict = df_up[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("").to_dict(orient="records")
-            db_query("insert", data=data_dict)
+            db_query("insert", data_dict)
             st.success("Succes!"); st.session_state.mijn_data = laad_data_df(); st.rerun()
         except Exception as e: st.error(f"Fout: {e}")
 
