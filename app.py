@@ -3,27 +3,23 @@ import pandas as pd
 from supabase import create_client, Client
 import base64
 import os
-from postgrest.exceptions import APIError # Voor robuuste error handling
 
 # --- 1. CONFIGURATIE & STYLING ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# Veiligheid: Wachtwoord uit secrets halen i.p.v. plain text
+# Veiligheid: Alles uit secrets
 WACHTWOORD = st.secrets["auth"]["password"]
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
-@st.cache_data(show_spinner=False)
+@st.cache_data
 def get_base64_logo(img_path):
-    """Slaat het logo op in het geheugen zodat het niet telkens van de schijf gelezen wordt."""
     if os.path.exists(img_path):
         with open(img_path, "rb") as f:
-            data = f.read()
-        return base64.b64encode(data).decode()
+            return base64.b64encode(f.read()).decode()
     return ""
 
-logo_base64 = get_base64_logo("theunissen.webp")
+LOGO_B64 = get_base64_logo("theunissen.webp")
 
-# (CSS styling blijft exact gelijk aan jouw origineel)
 st.markdown(f"""
     <style>
     .block-container {{ padding-top: 1.5rem; padding-bottom: 5rem; }}
@@ -33,90 +29,89 @@ st.markdown(f"""
     .header-container h1 {{ margin: 0; white-space: nowrap; font-weight: 700; font-size: 2.2rem !important; }}
     @media (max-width: 992px) {{ .header-container img {{ width: 50px; }} .header-container h1 {{ font-size: 1.7rem !important; }} }}
     @media (max-width: 600px) {{ .header-container img {{ width: 38px; }} .header-container h1 {{ font-size: 1.3rem !important; }} .header-container {{ gap: 10px; }} }}
-    .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-top: -10px; margin-bottom: 10px; }}
-    div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; display: flex; align-items: center; }}
-    div[data-testid="stTextInput"] input {{ height: 3.5em !important; }}
+    .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-top: -10px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
+    div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
     div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; }}
-    [data-testid="stDataEditor"] input[type="checkbox"] {{ transform: scale(1.8); margin: 10px; cursor: pointer; }}
-    div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; border: none; }}
+    div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; }}
     div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DATABASE FUNCTIES ---
+# --- 2. DATABASE ENGINE (CLEAN & ROBUUST) ---
 @st.cache_resource
-def get_supabase() -> Client:
+def init_connection():
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
-def laad_data():
-    """Robuuste manier om data op te halen met error handling."""
+supabase = init_connection()
+
+def db_query(action, table="glas_voorraad", data=None, filters=None):
+    """Eén centrale plek voor alle database acties met error handling."""
     try:
-        res = get_supabase().table("glas_voorraad").select("*").order("id").execute()
-        df = pd.DataFrame(res.data)
-        if df.empty:
-            df = pd.DataFrame(columns=["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"])
-        df["Selecteren"] = False
-        return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
+        query = supabase.table(table)
+        if action == "select":
+            res = query.select("*").order("id").execute()
+        elif action == "insert":
+            res = query.insert(data).execute()
+        elif action == "update":
+            res = query.update(data).in_("id", filters).execute()
+        elif action == "delete":
+            res = query.delete().in_("id", filters).execute()
+        return res.data
     except Exception as e:
-        st.error(f"Fout bij het laden van de gegevens: {e}")
-        return pd.DataFrame()
+        st.error(f"Database fout ({action}): {e}")
+        return None
+
+def laad_data_df():
+    data = db_query("select")
+    if data is None: return pd.DataFrame()
+    df = pd.DataFrame(data)
+    if df.empty:
+        df = pd.DataFrame(columns=["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"])
+    df["Selecteren"] = False
+    return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
 
 # --- 3. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = st.query_params.get("auth") == "true"
 
 if not st.session_state.ingelogd:
-    _, col2, _ = st.columns([1,2,1])
-    with col2:
+    _, col, _ = st.columns([1,2,1])
+    with col:
         st.header("Inloggen")
-        ww = st.text_input("Wachtwoord", type="password")
-        if st.button("Inloggen", use_container_width=True):
-            if ww == WACHTWOORD:
+        if st.text_input("Wachtwoord", type="password") == WACHTWOORD:
+            if st.button("Inloggen", use_container_width=True):
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
-            else:
-                st.error("Onjuist wachtwoord")
+        elif st.button("Inloggen", use_container_width=True):
+            st.error("Wachtwoord onjuist")
     st.stop()
 
-# --- 4. INITIALISATIE ---
-if 'mijn_data' not in st.session_state: 
-    st.session_state.mijn_data = laad_data()
-if 'bulk_loc' not in st.session_state:
-    st.session_state.bulk_loc = "HK"
-if 'confirm_delete' not in st.session_state:
-    st.session_state.confirm_delete = False
-if 'show_location_grid' not in st.session_state:
-    st.session_state.show_location_grid = False
+# --- 4. STATE MANAGEMENT ---
+if 'mijn_data' not in st.session_state: st.session_state.mijn_data = laad_data_df()
+if 'bulk_loc' not in st.session_state: st.session_state.bulk_loc = "HK"
+for key in ['confirm_delete', 'show_location_grid']:
+    if key not in st.session_state: st.session_state[key] = False
 
-def reset_zoekopdracht():
-    st.session_state.zoek_veld = ""
-
-# --- 5. HEADER ---
-col_head, col_logout = st.columns([0.8, 0.2])
-with col_head:
-    st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{logo_base64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
-with col_logout:
-    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+# --- 5. UI: HEADER & ZOEKEN ---
+h_col1, h_col2 = st.columns([0.8, 0.2])
+with h_col1:
+    st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{LOGO_B64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
+with h_col2:
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
-# --- 6. ZOEKFUNCTIE ---
 c1, c2, c3 = st.columns([6, 1, 1])
-with c1: 
-    zoekterm = st.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
-with c2: 
-    if st.button("ZOEKEN", use_container_width=True): st.rerun()
-with c3: 
-    st.button("WISSEN", use_container_width=True, on_click=reset_zoekopdracht)
+zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
+if c2.button("ZOEKEN", use_container_width=True): st.rerun()
+if c3.button("WISSEN", use_container_width=True):
+    st.session_state.zoek_veld = ""; st.rerun()
 
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 7. ACTIEHOUDER ---
+# --- 6. DATA EDITOR ---
 actie_houder = st.container()
-
-# --- 8. TABEL ---
 edited_df = st.data_editor(
     view_df,
     column_config={
@@ -124,140 +119,87 @@ edited_df = st.data_editor(
         "id": None,
         "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
         "aantal": st.column_config.NumberColumn("Aant.", width="small"),
-        "order_nummer": st.column_config.TextColumn("Order"),
-        "omschrijving": st.column_config.TextColumn("Glas type"),
     },
-    hide_index=True, 
-    use_container_width=True, 
-    key="main_editor", 
-    height=500
+    hide_index=True, use_container_width=True, key="main_editor", height=500
 )
 
-# --- 9. ACTIEBOX LOGICA ---
-geselecteerd = edited_df[edited_df["Selecteren"] == True]
+# --- 7. ACTIES (Batch Verwerking) ---
+geselecteerd = edited_df[edited_df["Selecteren"]]
+ids_to_act = geselecteerd["id"].tolist()
 
 if not geselecteerd.empty:
     with actie_houder:
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
-        cb_col1, cb_col2 = st.columns(2)
+        btn_col1, btn_col2 = st.columns(2)
         
-        with cb_col1:
-            knop_label = "📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT SELECTIE"
-            if st.button(knop_label, use_container_width=True):
-                st.session_state.show_location_grid = not st.session_state.show_location_grid
-                st.rerun()
+        if btn_col1.button("📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT", use_container_width=True):
+            st.session_state.show_location_grid = not st.session_state.show_location_grid; st.rerun()
 
-        with cb_col2:
-            if not st.session_state.confirm_delete:
-                if st.button(f"🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
-                    st.session_state.confirm_delete = True; st.rerun()
-            else:
+        if not st.session_state.confirm_delete:
+            if btn_col2.button("🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
+                st.session_state.confirm_delete = True; st.rerun()
+        else:
+            with btn_col2:
                 st.warning("Zeker weten?")
-                c_yes, c_no = st.columns(2)
-                if c_yes.button("JA, VERWIJDER", key="confirm_delete_yes", use_container_width=True):
-                    try:
-                        ids = geselecteerd["id"].tolist()
-                        get_supabase().table("glas_voorraad").delete().in_("id", ids).execute()
-                        st.session_state.confirm_delete = False; st.session_state.mijn_data = laad_data(); st.rerun()
-                    except Exception as e:
-                        st.error(f"Fout bij verwijderen: {e}")
-
-                if c_no.button("ANNULEER", use_container_width=True):
+                cy, cn = st.columns(2)
+                if cy.button("JA", key="confirm_delete_yes", use_container_width=True):
+                    db_query("delete", filters=ids_to_act)
+                    st.session_state.confirm_delete = False; st.session_state.mijn_data = laad_data_df(); st.rerun()
+                if cn.button("NEE", use_container_width=True):
                     st.session_state.confirm_delete = False; st.rerun()
 
         if st.session_state.show_location_grid:
-            st.write("---")
-            if st.button(f"🚀 NU VERPLAATSEN NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
-                try:
-                    ids = geselecteerd["id"].tolist()
-                    get_supabase().table("glas_voorraad").update({"locatie": st.session_state.bulk_loc}).in_("id", ids).execute()
-                    st.session_state.mijn_data = laad_data()
-                    st.session_state.show_location_grid = False
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Fout bij verplaatsen: {e}")
+            st.divider()
+            if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
+                db_query("update", data={"locatie": st.session_state.bulk_loc}, filters=ids_to_act)
+                st.session_state.show_location_grid = False; st.session_state.mijn_data = laad_data_df(); st.rerun()
             
-            st.write("**Kies nieuwe doellocatie:**")
-            for i in range(0, len(LOCATIE_OPTIES), 5):
-                row_options = LOCATIE_OPTIES[i:i+5]
-                grid_cols = st.columns(5)
-                for idx, loc_naam in enumerate(row_options):
-                    is_active = st.session_state.bulk_loc == loc_naam
-                    if grid_cols[idx].button(loc_naam, key=f"grid_{loc_naam}", use_container_width=True, 
-                                           type="primary" if is_active else "secondary"):
-                        st.session_state.bulk_loc = loc_naam
-                        st.rerun()
+            cols = st.columns(5)
+            for i, loc in enumerate(LOCATIE_OPTIES):
+                if cols[i % 5].button(loc, key=f"g_{loc}", use_container_width=True, type="primary" if st.session_state.bulk_loc == loc else "secondary"):
+                    st.session_state.bulk_loc = loc; st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
-else:
-    st.session_state.confirm_delete = False
-    st.session_state.show_location_grid = False
 
-# --- 10. OPSLAAN VAN HANDMATIGE EDITS (Efficiënter gemaakt) ---
-if "main_editor" in st.session_state:
-    edits = st.session_state["main_editor"].get("edited_rows", {})
-    if edits:
-        updates_made = False
-        try:
-            # We groeperen wijzigingen niet meer per stuk als het niet nodig is
-            for row_idx, changes in edits.items():
-                inhoud_wijziging = {k: v for k, v in changes.items() if k != "Selecteren"}
-                if inhoud_wijziging:
-                    row_id = view_df.iloc[int(row_idx)]["id"]
-                    get_supabase().table("glas_voorraad").update(inhoud_wijziging).eq("id", row_id).execute()
-                    updates_made = True
-            if updates_made:
-                # Cache opschonen en data opnieuw laden
-                st.session_state.mijn_data = laad_data()
-                st.rerun()
-        except Exception as e:
-            st.error(f"Fout bij opslaan wijziging: {e}")
+# --- 8. IN-LINE EDITS ---
+edits = st.session_state.main_editor.get("edited_rows", {})
+if edits:
+    for row_idx, changes in edits.items():
+        clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
+        if clean_changes:
+            row_id = [view_df.iloc[int(row_idx)]["id"]]
+            db_query("update", data=clean_changes, filters=row_id)
+    st.session_state.mijn_data = laad_data_df(); st.rerun()
 
-# --- 11. BEHEER SECTIE ---
+# --- 9. BEHEER & IMPORT ---
 st.divider()
-st.subheader("⚙️ Beheer & Toevoegen")
-exp_col1, exp_col2 = st.columns(2)
+ex1, ex2 = st.columns(2)
+with ex1.expander("➕ Nieuwe Ruit"):
+    with st.form("add_form", clear_on_submit=True):
+        f = {
+            "locatie": st.selectbox("Locatie", LOCATIE_OPTIES),
+            "order_nummer": st.text_input("Ordernummer"),
+            "aantal": st.number_input("Aantal", min_value=1, value=1),
+            "breedte": st.number_input("Breedte", value=0),
+            "hoogte": st.number_input("Hoogte", value=0),
+            "omschrijving": st.text_input("Glas type"),
+            "uit_voorraad": "Nee"
+        }
+        if st.form_submit_button("VOEG TOE", use_container_width=True):
+            db_query("insert", data=f)
+            st.session_state.mijn_data = laad_data_df(); st.rerun()
 
-with exp_col1:
-    with st.expander("➕ Nieuwe Ruit Handmatig"):
-        with st.form("add_form", clear_on_submit=True):
-            f_loc = st.selectbox("Locatie", LOCATIE_OPTIES)
-            f_ord = st.text_input("Ordernummer")
-            f_aan = st.number_input("Aantal", min_value=1, value=1)
-            f_br = st.number_input("Breedte", value=0)
-            f_hg = st.number_input("Hoogte", value=0)
-            f_oms = st.text_input("Glas type")
-            if st.form_submit_button("VOEG TOE", use_container_width=True):
-                try:
-                    get_supabase().table("glas_voorraad").insert({
-                        "locatie": f_loc, "order_nummer": f_ord, "aantal": f_aan, 
-                        "breedte": f_br, "hoogte": f_hg, "omschrijving": f_oms, "uit_voorraad": "Nee"
-                    }).execute()
-                    st.session_state.mijn_data = laad_data(); st.rerun()
-                except Exception as e:
-                    st.error(f"Fout bij handmatig toevoegen: {e}")
-
-with exp_col2:
-    with st.expander("📥 Excel Import"):
-        uploaded_file = st.file_uploader("Kies Excel bestand", type=["xlsx"])
-        if uploaded_file and st.button("UPLOAD NU", use_container_width=True):
-            try:
-                raw = pd.read_excel(uploaded_file)
-                raw.columns = [str(c).strip().lower() for c in raw.columns]
-                mapping = {"locatie": "locatie", "aantal": "aantal", "breedte": "breedte", "hoogte": "hoogte", "order": "order_nummer", "omschrijving": "omschrijving"}
-                raw = raw.rename(columns=mapping)
-                import_df = raw.dropna(subset=["order_nummer"])
-                import_df["uit_voorraad"] = "Nee"
-                
-                # Efficiëntie: In één keer alle rijen naar Supabase sturen
-                data_dict = import_df[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("").to_dict(orient="records")
-                if data_dict:
-                    get_supabase().table("glas_voorraad").insert(data_dict).execute()
-                    st.success("Import succesvol!"); st.session_state.mijn_data = laad_data(); st.rerun()
-                else:
-                    st.warning("Geen geldige data gevonden in Excel.")
-            except Exception as e: 
-                st.error(f"Fout bij import: {e}")
+with ex2.expander("📥 Excel Import"):
+    up = st.file_uploader("Excel bestand", type=["xlsx"])
+    if up and st.button("UPLOAD NU", use_container_width=True):
+        try:
+            df_up = pd.read_excel(up)
+            df_up.columns = [str(c).strip().lower() for c in df_up.columns]
+            df_up = df_up.rename(columns={"order": "order_nummer"}).dropna(subset=["order_nummer"])
+            df_up["uit_voorraad"] = "Nee"
+            data_dict = df_up[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].fillna("").to_dict(orient="records")
+            db_query("insert", data=data_dict)
+            st.success("Succes!"); st.session_state.mijn_data = laad_data_df(); st.rerun()
+        except Exception as e: st.error(f"Fout: {e}")
 
 if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
-    st.cache_data.clear() # Cache legen zodat hij echt verse data haalt
-    st.session_state.mijn_data = laad_data(); st.rerun()
+    st.cache_data.clear(); st.session_state.mijn_data = laad_data_df(); st.rerun()
