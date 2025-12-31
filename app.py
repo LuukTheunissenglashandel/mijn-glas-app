@@ -7,7 +7,6 @@ import os
 # --- 1. CONFIGURATIE & STYLING ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# Veiligheid: Alles uit secrets
 WACHTWOORD = st.secrets["auth"]["password"]
 LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
 
@@ -69,9 +68,15 @@ def laad_data_df():
     df["Selecteren"] = False
     return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
 
-# --- 3. CALLBACK FUNCTIES (Oplossing voor de error) ---
-def reset_zoekveld():
+# --- 3. CALLBACK FUNCTIES (Stabiliteit) ---
+def cb_wis_zoekveld():
     st.session_state.zoek_veld = ""
+
+def cb_toggle_grid():
+    st.session_state.show_location_grid = not st.session_state.show_location_grid
+
+def cb_set_bulk_loc(loc):
+    st.session_state.bulk_loc = loc
 
 # --- 4. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
@@ -81,9 +86,9 @@ if not st.session_state.ingelogd:
     _, col, _ = st.columns([1,2,1])
     with col:
         st.header("Inloggen")
-        input_pass = st.text_input("Wachtwoord", type="password")
+        pw = st.text_input("Wachtwoord", type="password")
         if st.button("Inloggen", use_container_width=True):
-            if input_pass == WACHTWOORD:
+            if pw == WACHTWOORD:
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
             else:
                 st.error("Wachtwoord onjuist")
@@ -105,15 +110,9 @@ with h_col2:
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
 c1, c2, c3 = st.columns([6, 1, 1])
-# De widget gebruikt 'zoek_veld' als key
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
-
-if c2.button("ZOEKEN", use_container_width=True): 
-    st.rerun()
-
-# DE FIX: Gebruik 'on_click' callback in plaats van directe state aanpassing na de button
-if c3.button("WISSEN", use_container_width=True, on_click=reset_zoekveld):
-    pass # De rerun gebeurt automatisch door de callback
+if c2.button("ZOEKEN", use_container_width=True): st.rerun()
+c3.button("WISSEN", use_container_width=True, on_click=cb_wis_zoekveld)
 
 view_df = st.session_state.mijn_data.copy()
 if zoekterm:
@@ -142,8 +141,9 @@ if not geselecteerd.empty:
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
         btn_col1, btn_col2 = st.columns(2)
         
-        if btn_col1.button("📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT", use_container_width=True):
-            st.session_state.show_location_grid = not st.session_state.show_location_grid; st.rerun()
+        # Verbeterde sluit-knop met callback
+        btn_col1.button("📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT", 
+                        use_container_width=True, on_click=cb_toggle_grid)
 
         if not st.session_state.confirm_delete:
             if btn_col2.button("🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
@@ -166,19 +166,25 @@ if not geselecteerd.empty:
             
             cols = st.columns(5)
             for i, loc in enumerate(LOCATIE_OPTIES):
-                if cols[i % 5].button(loc, key=f"g_{loc}", use_container_width=True, type="primary" if st.session_state.bulk_loc == loc else "secondary"):
-                    st.session_state.bulk_loc = loc; st.rerun()
+                # Locatie buttons gebruiken nu ook callbacks voor betere stabiliteit
+                cols[i % 5].button(loc, key=f"g_{loc}", use_container_width=True, 
+                                   type="primary" if st.session_state.bulk_loc == loc else "secondary",
+                                   on_click=cb_set_bulk_loc, args=(loc,))
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 9. IN-LINE EDITS ---
+# --- 9. IN-LINE EDITS (Nu zonder onbedoelde reloads bij checkbox) ---
 edits = st.session_state.main_editor.get("edited_rows", {})
 if edits:
+    any_actual_change = False
     for row_idx, changes in edits.items():
         clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
         if clean_changes:
+            any_actual_change = True
             row_id = [view_df.iloc[int(row_idx)]["id"]]
             db_query("update", data=clean_changes, filters=row_id)
-    st.session_state.mijn_data = laad_data_df(); st.rerun()
+    
+    if any_actual_change:
+        st.session_state.mijn_data = laad_data_df(); st.rerun()
 
 # --- 10. BEHEER & IMPORT ---
 st.divider()
