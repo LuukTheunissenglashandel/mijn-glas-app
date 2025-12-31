@@ -4,55 +4,52 @@ from supabase import create_client, Client
 import base64
 import os
 
-# --- 1. CONFIGURATIE & STYLING ---
+# --- 1. CONFIGURATIE ---
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-# Initialiseer zoom_level in session_state VOORDAT de CSS wordt geladen
+# Initialiseer zoom_level direct
 if "zoom_level" not in st.session_state:
     st.session_state.zoom_level = "100%"
 
-# Dynamische CSS voor Zoom (Direct bovenaan voor 1-klik respons)
+# --- 2. LOGO VERWERKING (Vóór de UI aanroepen) ---
+@st.cache_data
+def get_base64_logo(img_path):
+    if os.path.exists(img_path):
+        with open(img_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return ""
+
+LOGO_B64 = get_base64_logo("theunissen.webp")
+
+# --- 3. STYLING & ZOOM CSS ---
 st.markdown(f"""
     <style>
     html {{
         zoom: {st.session_state.zoom_level};
-        -moz-transform: scale({st.session_state.zoom_level});
-        -moz-transform-origin: 0 0;
     }}
     .block-container {{ padding-top: 1.5rem; padding-bottom: 5rem; }}
     #MainMenu, footer, header {{visibility: hidden;}}
     .header-container {{ display: flex; align-items: center; gap: 15px; margin-bottom: 20px; flex-wrap: nowrap; }}
     .header-container img {{ height: auto; flex-shrink: 0; width: 70px; }}
     .header-container h1 {{ margin: 0; white-space: nowrap; font-weight: 700; font-size: 2.2rem !important; }}
-    
-    /* Styling voor de Zoom Selector */
-    .zoom-label {{ 
-        font-size: 0.9rem; 
-        font-weight: 600; 
-        color: #555; 
-        margin-bottom: -10px;
-    }}
-    div[data-testid="stRadio"] > div {{
-        flex-direction: row !important;
-        gap: 5px;
-    }}
-    div[data-testid="stRadio"] label {{
-        background-color: #f0f2f6;
-        padding: 2px 10px;
-        border-radius: 4px;
-        border: 1px solid #ddd;
-    }}
-    
-    /* Bestaande UI elementen */
+    @media (max-width: 992px) {{ .header-container img {{ width: 50px; }} .header-container h1 {{ font-size: 1.7rem !important; }} }}
+    @media (max-width: 600px) {{ .header-container img {{ width: 38px; }} .header-container h1 {{ font-size: 1.3rem !important; }} .header-container {{ gap: 10px; }} }}
     .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 10px 15px; margin-top: -10px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
     div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
     div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; }}
     div.stButton > button[key^="delete_btn"], div.stButton > button[key^="confirm_delete_yes"] {{ background-color: #ff4b4b; color: white; }}
-    div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; padding: 0px 10px !important; }}
+    div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; height: 2.5em !important; }}
+    
+    /* Zoom Radio Styling */
+    div[data-testid="stRadio"] > div {{ flex-direction: row !important; gap: 10px; }}
+    div[data-testid="stRadio"] label {{ background-color: #f0f2f6; padding: 2px 12px; border-radius: 5px; border: 1px solid #ddd; cursor: pointer; }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DATABASE ENGINE ---
+# --- 4. DATABASE ENGINE ---
+WACHTWOORD = st.secrets["auth"]["password"]
+LOCATIE_OPTIES = ["HK", "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7","H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17", "H18", "H19", "H20"]
+
 @st.cache_resource
 def init_connection():
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
@@ -84,17 +81,11 @@ def laad_data_df():
     df["Selecteren"] = False
     return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
 
-# --- 3. CALLBACK FUNCTIES ---
-def cb_wis_zoekveld():
-    st.session_state.zoek_veld = ""
+# --- 5. CALLBACKS & AUTH ---
+def cb_wis_zoekveld(): st.session_state.zoek_veld = ""
+def cb_toggle_grid(): st.session_state.show_location_grid = not st.session_state.show_location_grid
+def cb_set_bulk_loc(loc): st.session_state.bulk_loc = loc
 
-def cb_toggle_grid():
-    st.session_state.show_location_grid = not st.session_state.show_location_grid
-
-def cb_set_bulk_loc(loc):
-    st.session_state.bulk_loc = loc
-
-# --- 4. AUTHENTICATIE ---
 if "ingelogd" not in st.session_state:
     st.session_state.ingelogd = st.query_params.get("auth") == "true"
 
@@ -106,43 +97,30 @@ if not st.session_state.ingelogd:
         if st.button("Inloggen", use_container_width=True):
             if pw == WACHTWOORD:
                 st.session_state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
-            else:
-                st.error("Wachtwoord onjuist")
+            else: st.error("Wachtwoord onjuist")
     st.stop()
 
-# --- 5. STATE MANAGEMENT ---
+# --- 6. STATE MANAGEMENT ---
 if 'mijn_data' not in st.session_state: st.session_state.mijn_data = laad_data_df()
 if 'bulk_loc' not in st.session_state: st.session_state.bulk_loc = "HK"
 if 'zoek_veld' not in st.session_state: st.session_state.zoek_veld = ""
 for key in ['confirm_delete', 'show_location_grid']:
     if key not in st.session_state: st.session_state[key] = False
 
-# --- 6. UI: HEADER & ZOEKEN ---
+# --- 7. UI: HEADER ---
 h_col1, h_col2 = st.columns([0.7, 0.3])
 with h_col1:
     st.markdown(f'<div class="header-container"><img src="data:image/webp;base64,{LOGO_B64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
-
 with h_col2:
-    # Zoom en Uitloggen sectie
-    st.markdown('<p class="zoom-label">Beeldvergroting:</p>', unsafe_allow_html=True)
-    # Gebruik een key die direct de session_state aanstuurt voor 1-klik werking
-    st.radio(
-        "Zoom",
-        ["100%", "125%", "150%"],
-        key="zoom_level",
-        horizontal=True,
-        label_visibility="collapsed"
-    )
+    # Zoom Direct (1-klik oplossing)
+    st.radio("Zoom", ["100%", "125%", "150%"], key="zoom_level", horizontal=True, label_visibility="collapsed")
     if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
         st.session_state.ingelogd = False; st.query_params.clear(); st.rerun()
 
-# Rest van de UI (volledig ongewijzigd)
+# --- 8. ZOEKEN & TABEL ---
 c1, c2, c3 = st.columns([5, 1, 2])
 zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", key="zoek_veld")
-
-if c2.button("ZOEKEN", use_container_width=True): 
-    st.rerun()
-
+if c2.button("ZOEKEN", use_container_width=True): st.rerun()
 if st.session_state.zoek_veld:
     c3.button("Zoekopdracht wissen", use_container_width=True, on_click=cb_wis_zoekveld)
 
@@ -151,7 +129,6 @@ if zoekterm:
     mask = view_df.drop(columns=["Selecteren"]).astype(str).apply(lambda x: x.str.contains(zoekterm, case=False)).any(axis=1)
     view_df = view_df[mask]
 
-# --- 7. DATA EDITOR ---
 actie_houder = st.container()
 edited_df = st.data_editor(
     view_df,
@@ -164,7 +141,7 @@ edited_df = st.data_editor(
     hide_index=True, use_container_width=True, key="main_editor", height=500
 )
 
-# --- 8. ACTIES (Batch Verwerking) ---
+# --- 9. BATCH ACTIES ---
 geselecteerd = edited_df[edited_df["Selecteren"]]
 ids_to_act = geselecteerd["id"].tolist()
 
@@ -172,9 +149,7 @@ if not geselecteerd.empty:
     with actie_houder:
         st.markdown('<div class="action-box">', unsafe_allow_html=True)
         btn_col1, btn_col2 = st.columns(2)
-        
-        btn_col1.button("📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT", 
-                        use_container_width=True, on_click=cb_toggle_grid)
+        btn_col1.button("📍 LOCATIE WIJZIGEN" if not st.session_state.show_location_grid else "❌ SLUIT", use_container_width=True, on_click=cb_toggle_grid)
 
         if not st.session_state.confirm_delete:
             if btn_col2.button("🗑️ MEEGENOMEN / WISSEN", key="delete_btn", use_container_width=True):
@@ -194,15 +169,12 @@ if not geselecteerd.empty:
             if st.button(f"🚀 VERPLAATS NAAR {st.session_state.bulk_loc}", type="primary", use_container_width=True):
                 db_query("update", data={"locatie": st.session_state.bulk_loc}, filters=ids_to_act)
                 st.session_state.show_location_grid = False; st.session_state.mijn_data = laad_data_df(); st.rerun()
-            
             cols = st.columns(5)
             for i, loc in enumerate(LOCATIE_OPTIES):
-                cols[i % 5].button(loc, key=f"g_{loc}", use_container_width=True, 
-                                   type="primary" if st.session_state.bulk_loc == loc else "secondary",
-                                   on_click=cb_set_bulk_loc, args=(loc,))
+                cols[i % 5].button(loc, key=f"g_{loc}", use_container_width=True, type="primary" if st.session_state.bulk_loc == loc else "secondary", on_click=cb_set_bulk_loc, args=(loc,))
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 9. IN-LINE EDITS ---
+# --- 10. EDITS & IMPORT ---
 edits = st.session_state.main_editor.get("edited_rows", {})
 if edits:
     any_actual_change = False
@@ -212,11 +184,8 @@ if edits:
             any_actual_change = True
             row_id = [view_df.iloc[int(row_idx)]["id"]]
             db_query("update", data=clean_changes, filters=row_id)
-    
-    if any_actual_change:
-        st.session_state.mijn_data = laad_data_df(); st.rerun()
+    if any_actual_change: st.session_state.mijn_data = laad_data_df(); st.rerun()
 
-# --- 10. BEHEER & IMPORT ---
 st.divider()
 ex1, ex2 = st.columns(2)
 with ex1.expander("➕ Nieuwe Ruit"):
