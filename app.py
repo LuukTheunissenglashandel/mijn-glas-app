@@ -155,6 +155,12 @@ def update_zoekterm():
 
 def render_zoekbalk():
     state = st.session_state.app_state
+    
+    # Callback functie om alles veilig te wissen VOORDAT de rerun start
+    def actie_wissen():
+        state.zoek_veld = ""
+        st.session_state.zoek_input = ""
+
     if state.zoek_veld:
         c1, c2, c3 = st.columns([5, 2, 2])
     else:
@@ -169,11 +175,8 @@ def render_zoekbalk():
         st.rerun()
         
     if state.zoek_veld:
-        if c3.button("WISSEN", use_container_width=True):
-            state.zoek_veld = ""
-            # Fix: Verwijder de key uit session_state om API errors te voorkomen
-            if "zoek_input" in st.session_state:
-                del st.session_state.zoek_input
+        # Gebruik on_click voor een gegarandeerde reset van de UI
+        if c3.button("WISSEN", use_container_width=True, on_click=actie_wissen):
             st.rerun()
     return state.zoek_veld
 
@@ -223,7 +226,6 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
 
 def render_beheer_sectie(service: VoorraadService):
     st.divider()
-    # Expander secties
     ex1, ex2 = st.columns(2)
     with ex1.expander("➕ Nieuwe Ruit"):
         with st.form("add_form", clear_on_submit=True):
