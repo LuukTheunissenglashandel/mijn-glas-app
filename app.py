@@ -171,6 +171,7 @@ def render_zoekbalk():
     if state.zoek_veld:
         if c3.button("WISSEN", use_container_width=True):
             state.zoek_veld = ""
+            st.session_state["zoek_input"] = "" # FORCEER LEEG MAKEN VAN DE INPUT BALK
             st.rerun()
     return state.zoek_veld
 
@@ -254,7 +255,6 @@ def main():
         with col:
             st.header("Inloggen")
             pw_input = st.text_input("Wachtwoord", type="password")
-            # De knop staat nu altijd op het scherm
             if st.button("Inloggen", use_container_width=True):
                 if pw_input == WACHTWOORD:
                     state.ingelogd = True
