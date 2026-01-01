@@ -329,16 +329,23 @@ def render_header(logo_b64: str):
             st.rerun()
 
 
+def update_zoekterm():
+    """Callback functie voor zoekterm update (wordt getriggerd bij Enter)"""
+    st.session_state.app_state.zoek_veld = st.session_state.zoek_input
+
+
 def render_zoekbalk():
     """Render zoekbalk met zoek en wis knoppen"""
     c1, c2, c3 = st.columns([5, 1.5, 2])
     
+    # Text input met on_change voor Enter functionaliteit
     zoekterm = c1.text_input(
         "Zoeken", 
         placeholder="🔍 Zoek op order, maat of type...", 
         label_visibility="collapsed", 
         key="zoek_input",
-        value=st.session_state.app_state.zoek_veld
+        value=st.session_state.app_state.zoek_veld,
+        on_change=update_zoekterm  # Enter triggert nu zoeken!
     )
     
     if c2.button("ZOEKEN", use_container_width=True):
@@ -415,6 +422,7 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
                 type=button_type
             ):
                 state.bulk_loc = loc
+                # Geen rerun - Streamlit update automatisch
     
     st.markdown('</div>', unsafe_allow_html=True)
 
