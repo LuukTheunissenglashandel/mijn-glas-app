@@ -183,6 +183,7 @@ def render_styling(logo_b64: str):
     """, unsafe_allow_html=True)
 
 def render_header(logo_b64: str):
+    # Ratio aangepast: Logout knop kolom is nu '2' (gelijk aan Zoeken/Wissen)
     h1, h2, h3 = st.columns([5, 1.5, 2])
     with h1:
         st.markdown(f'<div class="header-left"><img src="data:image/webp;base64,{logo_b64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
@@ -198,11 +199,12 @@ def update_zoekterm():
 def render_zoekbalk():
     state = st.session_state.app_state
     
-    # Bepaal kolomverdeling: 2 kolommen als leeg, 3 als er gezocht wordt
+    # Kolomverdeling aangepast: Zoeken en Wissen hebben beide ratio '2'
     if state.zoek_veld:
-        c1, c2, c3 = st.columns([5, 1.5, 2])
+        c1, c2, c3 = st.columns([5, 2, 2])
     else:
-        c1, c2 = st.columns([7, 1.5])
+        # Placeholder kolom rechts om Zoeken knop op dezelfde plek en breedte te houden
+        c1, c2, c3 = st.columns([5, 2, 2])
     
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
@@ -358,13 +360,17 @@ def main():
     
     actie_houder = st.container()
 
-    # --- ALLES SELECTEREN BUTTON ---
-    col_sel, _ = st.columns([1.5, 7])
-    if col_sel.button("✅ ALLES SELECTEREN", use_container_width=True):
-        # Pak de ID's van de rijen die momenteel zichtbaar zijn
+    # --- ALLES SELECTEREN & DESELECTEREN BUTTONS ---
+    col_sel1, col_sel2, _ = st.columns([2, 2, 5])
+    
+    if col_sel1.button("✅ ALLES SELECTEREN", use_container_width=True):
         visible_ids = view_df["id"].tolist()
-        # Update alleen deze ID's in de hoofd-dataframe naar geselecteerd
         state.mijn_data.loc[state.mijn_data["id"].isin(visible_ids), "Selecteren"] = True
+        st.rerun()
+
+    if col_sel2.button("⬜ ALLES DESELECTEREN", use_container_width=True):
+        visible_ids = view_df["id"].tolist()
+        state.mijn_data.loc[state.mijn_data["id"].isin(visible_ids), "Selecteren"] = False
         st.rerun()
     
     # Data editor
