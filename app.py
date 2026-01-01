@@ -376,13 +376,15 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
     
     # Locatie wijzigen toggle
     btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
-    if btn_col1.button(btn_text, use_container_width=True):
+    if btn_col1.button(btn_text, use_container_width=True, key="toggle_location_grid"):
         state.show_location_grid = not state.show_location_grid
+        st.rerun()
     
     # Verwijder knop met bevestiging
     if not state.confirm_delete:
         if btn_col2.button("🗑️ MEEGENOMEN", key="delete_btn", use_container_width=True):
             state.confirm_delete = True
+            st.rerun()
     else:
         with btn_col2:
             st.warning("Zeker?")
@@ -394,35 +396,40 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
                 state.mijn_data = service.laad_voorraad_df()
                 st.rerun()
             
-            if cn.button("NEE", use_container_width=True):
+            if cn.button("NEE", key="cancel_delete", use_container_width=True):
                 state.confirm_delete = False
+                st.rerun()
     
     # Locatie grid (uitklapbaar)
     if state.show_location_grid:
         st.divider()
         
+        # Verplaats knop
         if st.button(
             f"🚀 VERPLAATS NAAR {state.bulk_loc}", 
             type="primary", 
-            use_container_width=True
+            use_container_width=True,
+            key="execute_move"
         ):
             service.repo.bulk_update_location(ids_to_act, state.bulk_loc)
             state.show_location_grid = False
             state.mijn_data = service.laad_voorraad_df()
             st.rerun()
         
-        # Grid met locatie knoppen (5 kolommen)
+        # Grid met locatie knoppen (5 kolommen) - gebruik radio buttons achter de schermen
+        st.write(f"Geselecteerde locatie: **{state.bulk_loc}**")
         cols = st.columns(5)
         for i, loc in enumerate(LOCATIE_OPTIES):
-            button_type = "primary" if state.bulk_loc == loc else "secondary"
-            if cols[i % 5].button(
-                loc, 
-                key=f"g_{loc}", 
-                use_container_width=True, 
-                type=button_type
-            ):
-                state.bulk_loc = loc
-                # Geen rerun - Streamlit update automatisch
+            with cols[i % 5]:
+                button_type = "primary" if state.bulk_loc == loc else "secondary"
+                if st.button(
+                    loc, 
+                    key=f"loc_btn_{loc}", 
+                    use_container_width=True, 
+                    type=button_type
+                ):
+                    state.bulk_loc = loc
+                    st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -584,13 +591,20 @@ def main():
         hide_index=True,
         use_container_width=True,
         key="main_editor",
-        height=500
+        height=500,
+        disabled=["id"]  # Voorkom dat ID kolom bewerkt kan worden
     )
     
     # Verwerk inline edits (gebeurt automatisch bij wijzigingen)
     edits = st.session_state.main_editor.get("edited_rows", {})
     if edits:
-        # Batch update - 1 database call ipv N calls!
+        # Synchroniseer selectie changes naar main data (voor consistentie)
+        for row_idx, changes in edits.items():
+            if "Selecteren" in changes:
+                row_id = view_df.iloc[int(row_idx)]["id"]
+                state.mijn_data.loc[state.mijn_data["id"] == row_id, "Selecteren"] = changes["Selecteren"]
+        
+        # Batch update voor niet-selectie velden - 1 database call ipv N calls!
         if service.verwerk_inline_edits(view_df, edits):
             state.mijn_data = service.laad_voorraad_df()
             st.rerun()
