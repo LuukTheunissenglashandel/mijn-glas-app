@@ -171,8 +171,9 @@ def render_zoekbalk():
     if state.zoek_veld:
         if c3.button("WISSEN", use_container_width=True):
             state.zoek_veld = ""
-            # Zorg dat de widget waarde in session_state ook wordt leeggemaakt
-            st.session_state.zoek_input = "" 
+            # Fix: Verwijder de key uit session_state om API errors te voorkomen
+            if "zoek_input" in st.session_state:
+                del st.session_state.zoek_input
             st.rerun()
     return state.zoek_veld
 
@@ -222,6 +223,7 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
 
 def render_beheer_sectie(service: VoorraadService):
     st.divider()
+    # Expander secties
     ex1, ex2 = st.columns(2)
     with ex1.expander("➕ Nieuwe Ruit"):
         with st.form("add_form", clear_on_submit=True):
@@ -274,8 +276,6 @@ def main():
     zoekterm = render_zoekbalk()
     view_df = service.filter_voorraad(state.mijn_data.copy(), zoekterm)
     
-    # --- SYNCHRONISATIE HANDMATIGE SELECTIE ---
-    # Update de hoofd-state direct als er in de editor wordt geklikt, zodat de buttons meetellen
     if "main_editor" in st.session_state:
         for row_idx, changes in st.session_state.main_editor.get("edited_rows", {}).items():
             if "Selecteren" in changes:
@@ -284,8 +284,6 @@ def main():
 
     actie_houder = st.container()
 
-    # --- SELECTIE BUTTONS ---
-    # Bereken het aantal ruiten op basis van de gesynchroniseerde state
     aantal_geselecteerd = int(state.mijn_data[state.mijn_data["id"].isin(view_df["id"]) & state.mijn_data["Selecteren"]]["aantal"].sum())
     tonen_getal = f" ({aantal_geselecteerd})"
 
@@ -296,12 +294,10 @@ def main():
     
     if col_sel2.button(f"⬜ ALLES DESELECTEREN{tonen_getal}", use_container_width=True):
         state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = False
-        # Wis ook de tijdelijke editor state om de vinkjes visueel te verwijderen
         if "main_editor" in st.session_state:
             st.session_state.main_editor["edited_rows"] = {}
         st.rerun()
     
-    # Render de editor met de meest actuele state
     current_view = service.filter_voorraad(state.mijn_data.copy(), zoekterm)
     edited_df = st.data_editor(current_view, column_config={"Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"), "id": None, "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"), "aantal": st.column_config.NumberColumn("Aant.", width="small")}, hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"])
     
