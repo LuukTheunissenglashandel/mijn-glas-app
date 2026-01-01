@@ -171,6 +171,8 @@ def render_zoekbalk():
     if state.zoek_veld:
         if c3.button("WISSEN", use_container_width=True):
             state.zoek_veld = ""
+            # Zorg dat de widget waarde in session_state ook wordt leeggemaakt
+            st.session_state.zoek_input = "" 
             st.rerun()
     return state.zoek_veld
 
