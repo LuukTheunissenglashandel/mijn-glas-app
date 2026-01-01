@@ -25,6 +25,7 @@ class AppState:
     mijn_data: pd.DataFrame = field(default_factory=pd.DataFrame)
     bulk_loc: str = "HK"
     zoek_veld: str = ""
+    last_query: str = None  # Bijhouden wat de laatste zoekopdracht was
     confirm_delete: bool = False
     show_location_grid: bool = False
 
@@ -45,9 +46,16 @@ class GlasVoorraadRepository:
             st.error(f"Database fout bij {operation}: {e}")
             raise
     
-    def get_all(self) -> Optional[List[Dict[str, Any]]]:
+    def get_data(self, zoekterm: str = "") -> Optional[List[Dict[str, Any]]]:
+        """Haalt gefilterde data op direct van de server (Punt 2 verbetering)."""
         with self._handle_errors("ophalen data"):
-            result = self.client.table(self.table).select("*").order("id").execute()
+            query = self.client.table(self.table).select("*")
+            if zoekterm:
+                # Server-side filter: zoek in order, omschrijving of locatie
+                search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
+                query = query.or_(search_filter)
+            
+            result = query.order("id").execute()
             return result.data
     
     def insert_many(self, records: List[Dict[str, Any]]) -> bool:
@@ -57,10 +65,7 @@ class GlasVoorraadRepository:
     
     def bulk_update_location(self, ids: List[int], nieuwe_locatie: str) -> bool:
         with self._handle_errors("locatie update"):
-            self.client.table(self.table)\
-                .update({"locatie": nieuwe_locatie})\
-                .in_("id", ids)\
-                .execute()
+            self.client.table(self.table).update({"locatie": nieuwe_locatie}).in_("id", ids).execute()
             return True
     
     def bulk_update_fields(self, updates: List[Dict[str, Any]]) -> bool:
@@ -81,17 +86,17 @@ class VoorraadService:
     def __init__(self, repo: GlasVoorraadRepository):
         self.repo = repo
     
-    def laad_voorraad_df(self) -> pd.DataFrame:
-        data = self.repo.get_all()
-        df = pd.DataFrame(data) if data else pd.DataFrame(columns=["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"])
+    def laad_voorraad_df(self, zoekterm: str = "") -> pd.DataFrame:
+        """Laadt data en bereidt het voor voor de UI."""
+        data = self.repo.get_data(zoekterm)
+        if not data:
+            return pd.DataFrame(columns=["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"])
+        
+        df = pd.DataFrame(data)
         df["Selecteren"] = False
-        return df[["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]]
-    
-    def filter_voorraad(self, df: pd.DataFrame, zoekterm: str) -> pd.DataFrame:
-        if df.empty or not zoekterm: return df
-        zoek_kolommen = [col for col in df.columns if col not in ["Selecteren", "id"]]
-        mask = df[zoek_kolommen].astype(str).apply(lambda x: x.str.contains(zoekterm, case=False, na=False)).any(axis=1)
-        return df[mask]
+        # Vaste kolomvolgorde voor consistente UI
+        kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
+        return df[kolommen]
     
     def verwerk_inline_edits(self, df: pd.DataFrame, edits: Dict[int, Dict[str, Any]]) -> bool:
         if not edits: return False
@@ -99,24 +104,30 @@ class VoorraadService:
         for row_idx, changes in edits.items():
             clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
             if clean_changes:
+                # Pak het ID van de rij via de index van de huidige dataframe
                 row_id = df.iloc[int(row_idx)]["id"]
-                batch_updates.append({"id": row_id, **clean_changes})
+                batch_updates.append({"id": int(row_id), **clean_changes})
         return self.repo.bulk_update_fields(batch_updates) if batch_updates else False
 
     def valideer_excel_import(self, df: pd.DataFrame) -> tuple[pd.DataFrame, List[str]]:
         errors = []
         df.columns = [str(c).strip().lower() for c in df.columns]
-        df = df.rename(columns={"order": "order_nummer", "ordernummer": "order_nummer", "aantal_stuks": "aantal", "qty": "aantal", "glastype": "omschrijving", "type": "omschrijving"})
+        mapping = {"order": "order_nummer", "ordernummer": "order_nummer", "aantal_stuks": "aantal", "qty": "aantal", "glastype": "omschrijving", "type": "omschrijving"}
+        df = df.rename(columns=mapping)
+        
         required = {"locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"}
         missing = required - set(df.columns)
-        if missing: return pd.DataFrame(), [f"❌ FOUT: Ontbrekende kolommen: {', '.join(missing)}"]
-        for num_col in ["aantal", "breedte", "hoogte"]: df[num_col] = pd.to_numeric(df[num_col], errors="coerce")
+        if missing: return pd.DataFrame(), [f"❌ Ontbrekende kolommen: {', '.join(missing)}"]
+        
+        for num_col in ["aantal", "breedte", "hoogte"]: 
+            df[num_col] = pd.to_numeric(df[num_col], errors="coerce")
+        
         df.loc[~df["locatie"].isin(LOCATIE_OPTIES), "locatie"] = "HK"
         df["uit_voorraad"] = "Nee"
         return df.dropna(subset=["order_nummer"]).fillna(""), errors
 
 # =============================================================================
-# 4. UI HELPER FUNCTIES
+# 4. UI HELPER FUNCTIES (Styling & Layout ongewijzigd)
 # =============================================================================
 
 @st.cache_data
@@ -155,16 +166,11 @@ def update_zoekterm():
 
 def render_zoekbalk():
     state = st.session_state.app_state
-    
-    # Callback functie om alles veilig te wissen VOORDAT de rerun start
     def actie_wissen():
         state.zoek_veld = ""
         st.session_state.zoek_input = ""
 
-    if state.zoek_veld:
-        c1, c2, c3 = st.columns([5, 2, 2])
-    else:
-        c1, c2 = st.columns([7, 2])
+    c1, c2, c3 = st.columns([5, 2, 2]) if state.zoek_veld else st.columns([7, 2, 0.1])
     
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
@@ -175,7 +181,6 @@ def render_zoekbalk():
         st.rerun()
         
     if state.zoek_veld:
-        # Gebruik on_click voor een gegarandeerde reset van de UI
         if c3.button("WISSEN", use_container_width=True, on_click=actie_wissen):
             st.rerun()
     return state.zoek_veld
@@ -203,7 +208,7 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             if cy.button("JA", use_container_width=True):
                 service.repo.delete_many(ids_to_act)
                 state.confirm_delete = False
-                state.mijn_data = service.laad_voorraad_df()
+                state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
                 st.rerun()
             if cn.button("NEE", use_container_width=True):
                 state.confirm_delete = False
@@ -214,7 +219,7 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
         if st.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
             service.repo.bulk_update_location(ids_to_act, state.bulk_loc)
             state.show_location_grid = False
-            state.mijn_data = service.laad_voorraad_df()
+            state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
         cols = st.columns(5)
         for i, loc in enumerate(LOCATIE_OPTIES):
@@ -232,27 +237,30 @@ def render_beheer_sectie(service: VoorraadService):
             nieuwe_ruit = {"locatie": st.selectbox("Locatie", LOCATIE_OPTIES), "order_nummer": st.text_input("Ordernummer"), "aantal": st.number_input("Aantal", min_value=1, value=1), "breedte": st.number_input("Breedte", value=0), "hoogte": st.number_input("Hoogte", value=0), "omschrijving": st.text_input("Glas type"), "uit_voorraad": "Nee"}
             if st.form_submit_button("VOEG TOE", use_container_width=True):
                 service.repo.insert_many([nieuwe_ruit])
-                st.session_state.app_state.mijn_data = service.laad_voorraad_df()
+                st.session_state.app_state.mijn_data = service.laad_voorraad_df(st.session_state.app_state.zoek_veld)
                 st.rerun()
     with ex2.expander("📥 Excel Import"):
         uploaded_file = st.file_uploader("Excel bestand", type=["xlsx"])
         if uploaded_file and st.button("UPLOAD NU", use_container_width=True):
             df_upload = pd.read_excel(uploaded_file)
-            df_normalized, errors = service.valideer_excel_import(df_upload)
+            df_normalized, _ = service.valideer_excel_import(df_upload)
             if not df_normalized.empty:
                 service.repo.insert_many(df_normalized[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "uit_voorraad", "omschrijving"]].to_dict(orient="records"))
-                st.session_state.app_state.mijn_data = service.laad_voorraad_df()
+                st.session_state.app_state.mijn_data = service.laad_voorraad_df(st.session_state.app_state.zoek_veld)
                 st.rerun()
 
 # =============================================================================
-# 5. INITIALISATIE & MAIN
+# 5. INITIALISATIE & MAIN (Verbeterde flow)
 # =============================================================================
 
 @st.cache_resource
-def init_supabase() -> Client: return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
+def init_supabase() -> Client: 
+    return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
 def main():
-    if "app_state" not in st.session_state: st.session_state.app_state = AppState(ingelogd=st.query_params.get("auth") == "true")
+    if "app_state" not in st.session_state: 
+        st.session_state.app_state = AppState(ingelogd=st.query_params.get("auth") == "true")
+    
     state = st.session_state.app_state
     
     if not state.ingelogd:
@@ -269,52 +277,80 @@ def main():
                     st.error("Wachtwoord onjuist")
         st.stop()
     
+    # Init service
     service = VoorraadService(GlasVoorraadRepository(init_supabase()))
     logo_b64 = get_base64_logo("theunissen.webp")
-    if state.mijn_data.empty: state.mijn_data = service.laad_voorraad_df()
     
+    # UI Renderen
     render_styling(logo_b64)
     render_header(logo_b64)
     zoekterm = render_zoekbalk()
-    view_df = service.filter_voorraad(state.mijn_data.copy(), zoekterm)
     
+    # DATA LOGICA: Alleen ophalen als de zoekterm veranderd is (Punt 3)
+    if state.mijn_data.empty or state.last_query != zoekterm:
+        state.mijn_data = service.laad_voorraad_df(zoekterm)
+        state.last_query = zoekterm
+
+    # Sync checkbox status vanuit de editor naar de state
     if "main_editor" in st.session_state:
-        for row_idx, changes in st.session_state.main_editor.get("edited_rows", {}).items():
+        edited_rows = st.session_state.main_editor.get("edited_rows", {})
+        for row_idx, changes in edited_rows.items():
             if "Selecteren" in changes:
-                row_id = view_df.iloc[int(row_idx)]["id"]
+                # Zet de selectie in de bron-dataframe op basis van de ID
+                row_id = state.mijn_data.iloc[int(row_idx)]["id"]
                 state.mijn_data.loc[state.mijn_data["id"] == row_id, "Selecteren"] = changes["Selecteren"]
 
+    # Actie knoppen container
     actie_houder = st.container()
 
-    aantal_geselecteerd = int(state.mijn_data[state.mijn_data["id"].isin(view_df["id"]) & state.mijn_data["Selecteren"]]["aantal"].sum())
-    tonen_getal = f" ({aantal_geselecteerd})"
+    # Selectie logica
+    aantal_geselecteerd = int(state.mijn_data[state.mijn_data["Selecteren"]]["aantal"].sum())
+    tonen_getal = f" ({aantal_geselecteerd})" if aantal_geselecteerd > 0 else ""
 
     col_sel1, col_sel2, _ = st.columns([2, 2, 5])
     if col_sel1.button(f"✅ ALLES SELECTEREN{tonen_getal}", use_container_width=True):
-        state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = True
+        state.mijn_data["Selecteren"] = True
         st.rerun()
     
-    if col_sel2.button(f"⬜ ALLES DESELECTEREN{tonen_getal}", use_container_width=True):
-        state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = False
+    if col_sel2.button(f"⬜ ALLES DESELECTEREN", use_container_width=True):
+        state.mijn_data["Selecteren"] = False
         if "main_editor" in st.session_state:
             st.session_state.main_editor["edited_rows"] = {}
         st.rerun()
     
-    current_view = service.filter_voorraad(state.mijn_data.copy(), zoekterm)
-    edited_df = st.data_editor(current_view, column_config={"Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"), "id": None, "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"), "aantal": st.column_config.NumberColumn("Aant.", width="small")}, hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"])
+    # De Data Editor
+    edited_df = st.data_editor(
+        state.mijn_data, 
+        column_config={
+            "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"), 
+            "id": None, 
+            "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"), 
+            "aantal": st.column_config.NumberColumn("Aant.", width="small")
+        }, 
+        hide_index=True, 
+        use_container_width=True, 
+        key="main_editor", 
+        height=500, 
+        disabled=["id"]
+    )
     
+    # Verwerk inline edits (niet de selectievakjes, die staan in de state)
     edits = st.session_state.main_editor.get("edited_rows", {})
     if edits and any(any(k != "Selecteren" for k in change.keys()) for change in edits.values()):
-        if service.verwerk_inline_edits(current_view, edits):
-            state.mijn_data = service.laad_voorraad_df()
+        if service.verwerk_inline_edits(state.mijn_data, edits):
+            state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
     
-    with actie_houder: render_batch_acties(edited_df[edited_df["Selecteren"]], service)
+    # Render acties onder de tabel voor geselecteerde items
+    with actie_houder: 
+        render_batch_acties(edited_df[edited_df["Selecteren"]], service)
+    
     render_beheer_sectie(service)
     
     if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
         st.cache_data.clear()
-        state.mijn_data = service.laad_voorraad_df()
+        state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
         st.rerun()
 
-if __name__ == "__main__": main()
+if __name__ == "__main__": 
+    main()
