@@ -160,6 +160,7 @@ def render_zoekbalk():
     else:
         c1, c2 = st.columns([7, 2])
     
+    # Gebruik state.zoek_veld als waarde; de key is alleen voor de on_change callback
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
                             value=state.zoek_veld, on_change=update_zoekterm)
@@ -171,7 +172,8 @@ def render_zoekbalk():
     if state.zoek_veld:
         if c3.button("WISSEN", use_container_width=True):
             state.zoek_veld = ""
-            st.session_state["zoek_input"] = "" # FORCEER LEEG MAKEN VAN DE INPUT BALK
+            # Door state.zoek_veld op leeg te zetten en te herladen, 
+            # wordt de 'value' van de text_input hierboven bij de volgende run leeg.
             st.rerun()
     return state.zoek_veld
 
