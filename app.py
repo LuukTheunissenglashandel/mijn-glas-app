@@ -141,7 +141,6 @@ def render_styling(logo_b64: str):
     """, unsafe_allow_html=True)
 
 def render_header(logo_b64: str):
-    # Verhouding 7:2 zodat Logout knop even breed is als de actieknoppen beneden
     h1, h2 = st.columns([7, 2])
     with h1:
         st.markdown(f'<div class="header-left"><img src="data:image/webp;base64,{logo_b64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
@@ -156,8 +155,6 @@ def update_zoekterm():
 
 def render_zoekbalk():
     state = st.session_state.app_state
-    # Als er gezocht wordt: [5, 2, 2] (totaal 9), als er niet gezocht wordt: [7, 2] (totaal 9)
-    # Dit houdt de 'Zoeken' knop op een constante breedte van 2/9 van het scherm.
     if state.zoek_veld:
         c1, c2, c3 = st.columns([5, 2, 2])
     else:
@@ -256,10 +253,15 @@ def main():
         _, col, _ = st.columns([1, 2, 1])
         with col:
             st.header("Inloggen")
-            if st.text_input("Wachtwoord", type="password") == WACHTWOORD and st.button("Inloggen", use_container_width=True):
-                state.ingelogd = True
-                st.query_params["auth"] = "true"
-                st.rerun()
+            pw_input = st.text_input("Wachtwoord", type="password")
+            # De knop staat nu altijd op het scherm
+            if st.button("Inloggen", use_container_width=True):
+                if pw_input == WACHTWOORD:
+                    state.ingelogd = True
+                    st.query_params["auth"] = "true"
+                    st.rerun()
+                else:
+                    st.error("Wachtwoord onjuist")
         st.stop()
     
     service = VoorraadService(GlasVoorraadRepository(init_supabase()))
