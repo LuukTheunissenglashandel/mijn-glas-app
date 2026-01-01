@@ -110,7 +110,6 @@ class VoorraadService:
         
         batch_updates = []
         for row_idx, changes in edits.items():
-            # Filter alleen de database-velden (dus GEEN 'Selecteren')
             clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
             
             if clean_changes:
@@ -197,16 +196,28 @@ def update_zoekterm():
     st.session_state.app_state.zoek_veld = st.session_state.zoek_input
 
 def render_zoekbalk():
-    c1, c2, c3 = st.columns([5, 1.5, 2])
-    zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", label_visibility="collapsed", 
-                             key="zoek_input", value=st.session_state.app_state.zoek_veld, on_change=update_zoekterm)
+    state = st.session_state.app_state
+    
+    # Bepaal kolomverdeling: 2 kolommen als leeg, 3 als er gezocht wordt
+    if state.zoek_veld:
+        c1, c2, c3 = st.columns([5, 1.5, 2])
+    else:
+        c1, c2 = st.columns([7, 1.5])
+    
+    zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
+                            label_visibility="collapsed", key="zoek_input", 
+                            value=state.zoek_veld, on_change=update_zoekterm)
+    
     if c2.button("ZOEKEN", use_container_width=True):
-        st.session_state.app_state.zoek_veld = zoekterm
-    if st.session_state.app_state.zoek_veld:
+        state.zoek_veld = zoekterm
+        st.rerun()
+        
+    if state.zoek_veld:
         if c3.button("WISSEN", use_container_width=True):
-            st.session_state.app_state.zoek_veld = ""
+            state.zoek_veld = ""
             st.rerun()
-    return st.session_state.app_state.zoek_veld
+            
+    return state.zoek_veld
 
 def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService):
     if geselecteerd_df.empty:
@@ -346,6 +357,15 @@ def main():
     view_df = service.filter_voorraad(state.mijn_data.copy(), zoekterm)
     
     actie_houder = st.container()
+
+    # --- ALLES SELECTEREN BUTTON ---
+    col_sel, _ = st.columns([1.5, 7])
+    if col_sel.button("✅ ALLES SELECTEREN", use_container_width=True):
+        # Pak de ID's van de rijen die momenteel zichtbaar zijn
+        visible_ids = view_df["id"].tolist()
+        # Update alleen deze ID's in de hoofd-dataframe naar geselecteerd
+        state.mijn_data.loc[state.mijn_data["id"].isin(visible_ids), "Selecteren"] = True
+        st.rerun()
     
     # Data editor
     edited_df = st.data_editor(
@@ -363,10 +383,9 @@ def main():
         disabled=["id"]
     )
     
-    # VERBETERDE LOGICA: Verwerk edits direct uit session_state zonder geforceerde rerun bij selectie
+    # Verwerk edits direct uit session_state
     edits = st.session_state.main_editor.get("edited_rows", {})
     if edits:
-        # Check of er méér is gewijzigd dan alleen de selectie-kolom
         has_real_edits = any(any(k != "Selecteren" for k in change.keys()) for change in edits.values())
         
         if has_real_edits:
@@ -374,7 +393,7 @@ def main():
                 state.mijn_data = service.laad_voorraad_df()
                 st.rerun()
     
-    # Gebruik de edited_df direct voor de selectie-acties (geen sync naar mijn_data nodig voor acties)
+    # Gebruik de edited_df direct voor de selectie-acties
     geselecteerd_df = edited_df[edited_df["Selecteren"] == True]
     with actie_houder:
         render_batch_acties(geselecteerd_df, service)
