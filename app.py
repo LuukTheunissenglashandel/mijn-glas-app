@@ -275,14 +275,15 @@ def main():
     actie_houder = st.container()
 
     # --- SELECTIE BUTTONS ---
-    # Bereken het totaal aantal ruiten (som van kolom 'aantal') voor de huidige weergave
-    totaal_ruiten = int(view_df["aantal"].sum()) if not view_df.empty else 0
+    # Bereken het aantal ruiten dat op dit moment geselecteerd is binnen de huidige weergave
+    aantal_geselecteerd = int(view_df[view_df["Selecteren"]]["aantal"].sum()) if not view_df.empty else 0
+    tonen_getal = f" ({aantal_geselecteerd})" if aantal_geselecteerd > 0 else ""
 
     col_sel1, col_sel2, _ = st.columns([2, 2, 5])
-    if col_sel1.button(f"✅ ALLES SELECTEREN ({totaal_ruiten})", use_container_width=True):
+    if col_sel1.button(f"✅ ALLES SELECTEREN{tonen_getal}", use_container_width=True):
         state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = True
         st.rerun()
-    if col_sel2.button(f"⬜ ALLES DESELECTEREN ({totaal_ruiten})", use_container_width=True):
+    if col_sel2.button(f"⬜ ALLES DESELECTEREN{tonen_getal}", use_container_width=True):
         state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = False
         st.rerun()
     
