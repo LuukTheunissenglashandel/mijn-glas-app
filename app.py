@@ -239,72 +239,7 @@ def render_beheer_sectie(service: VoorraadService):
                 st.rerun()
 
 # =============================================================================
-# 5. DATA SECTIE (FRAGMENT)
-# =============================================================================
-
-@st.fragment
-def render_data_sectie(service: VoorraadService, zoekterm: str):
-    """
-    Deze functie is een fragment. Interacties hierbinnen (zoals checkboxes) 
-    zorgen niet voor een volledige pagina-refresh.
-    """
-    state = st.session_state.app_state
-    
-    # 1. Sync checkbox state van de editor naar de hoofddata
-    if "main_editor" in st.session_state:
-        edits = st.session_state.main_editor.get("edited_rows", {})
-        for row_idx, changes in edits.items():
-            if "Selecteren" in changes:
-                # We moeten de id vinden van de gefilterde view
-                current_view = service.filter_voorraad(state.mijn_data, zoekterm)
-                row_id = current_view.iloc[int(row_idx)]["id"]
-                state.mijn_data.loc[state.mijn_data["id"] == row_id, "Selecteren"] = changes["Selecteren"]
-
-    # 2. Berekeningen voor UI
-    view_df = service.filter_voorraad(state.mijn_data.copy(), zoekterm)
-    aantal_geselecteerd = int(state.mijn_data[state.mijn_data["id"].isin(view_df["id"]) & state.mijn_data["Selecteren"]]["aantal"].sum())
-    tonen_getal = f" ({aantal_geselecteerd})" if aantal_geselecteerd > 0 else ""
-
-    # 3. Selectie Knoppen
-    col_sel1, col_sel2, _ = st.columns([2, 2, 5])
-    if col_sel1.button(f"✅ ALLES SELECTEREN{tonen_getal}", use_container_width=True):
-        state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = True
-        st.rerun()
-    
-    if col_sel2.button(f"⬜ ALLES DESELECTEREN", use_container_width=True):
-        state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = False
-        if "main_editor" in st.session_state:
-            st.session_state.main_editor["edited_rows"] = {}
-        st.rerun()
-
-    # 4. De Data Editor
-    edited_df = st.data_editor(
-        view_df, 
-        column_config={
-            "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"), 
-            "id": None, 
-            "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"), 
-            "aantal": st.column_config.NumberColumn("Aant.", width="small")
-        }, 
-        hide_index=True, 
-        use_container_width=True, 
-        key="main_editor", 
-        height=500, 
-        disabled=["id"]
-    )
-    
-    # 5. Verwerk inline tekst edits (locatie, aantal etc) - dit trigger wel een database save
-    edits = st.session_state.main_editor.get("edited_rows", {})
-    if edits and any(any(k != "Selecteren" for k in change.keys()) for change in edits.values()):
-        if service.verwerk_inline_edits(view_df, edits):
-            state.mijn_data = service.laad_voorraad_df()
-            st.rerun()
-
-    # 6. Render Batch Acties (zoals verplaatsen/verwijderen)
-    render_batch_acties(edited_df[edited_df["Selecteren"]], service)
-
-# =============================================================================
-# 6. INITIALISATIE & MAIN
+# 5. INITIALISATIE & MAIN
 # =============================================================================
 
 @st.cache_resource
@@ -335,10 +270,46 @@ def main():
     render_styling(logo_b64)
     render_header(logo_b64)
     zoekterm = render_zoekbalk()
-
-    # Roep het fragment aan voor de tabel en acties
-    render_data_sectie(service, zoekterm)
+    view_df = service.filter_voorraad(state.mijn_data.copy(), zoekterm)
     
+    # --- SYNCHRONISATIE HANDMATIGE SELECTIE ---
+    # Update de hoofd-state direct als er in de editor wordt geklikt, zodat de buttons meetellen
+    if "main_editor" in st.session_state:
+        for row_idx, changes in st.session_state.main_editor.get("edited_rows", {}).items():
+            if "Selecteren" in changes:
+                row_id = view_df.iloc[int(row_idx)]["id"]
+                state.mijn_data.loc[state.mijn_data["id"] == row_id, "Selecteren"] = changes["Selecteren"]
+
+    actie_houder = st.container()
+
+    # --- SELECTIE BUTTONS ---
+    # Bereken het aantal ruiten op basis van de gesynchroniseerde state
+    aantal_geselecteerd = int(state.mijn_data[state.mijn_data["id"].isin(view_df["id"]) & state.mijn_data["Selecteren"]]["aantal"].sum())
+    tonen_getal = f" ({aantal_geselecteerd})"
+
+    col_sel1, col_sel2, _ = st.columns([2, 2, 5])
+    if col_sel1.button(f"✅ ALLES SELECTEREN{tonen_getal}", use_container_width=True):
+        state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = True
+        st.rerun()
+    
+    if col_sel2.button(f"⬜ ALLES DESELECTEREN{tonen_getal}", use_container_width=True):
+        state.mijn_data.loc[state.mijn_data["id"].isin(view_df["id"]), "Selecteren"] = False
+        # Wis ook de tijdelijke editor state om de vinkjes visueel te verwijderen
+        if "main_editor" in st.session_state:
+            st.session_state.main_editor["edited_rows"] = {}
+        st.rerun()
+    
+    # Render de editor met de meest actuele state
+    current_view = service.filter_voorraad(state.mijn_data.copy(), zoekterm)
+    edited_df = st.data_editor(current_view, column_config={"Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"), "id": None, "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"), "aantal": st.column_config.NumberColumn("Aant.", width="small")}, hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"])
+    
+    edits = st.session_state.main_editor.get("edited_rows", {})
+    if edits and any(any(k != "Selecteren" for k in change.keys()) for change in edits.values()):
+        if service.verwerk_inline_edits(current_view, edits):
+            state.mijn_data = service.laad_voorraad_df()
+            st.rerun()
+    
+    with actie_houder: render_batch_acties(edited_df[edited_df["Selecteren"]], service)
     render_beheer_sectie(service)
     
     if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
