@@ -128,6 +128,8 @@ def render_header(logo_b64: str):
 def update_zoekterm():
     st.session_state.app_state.zoek_veld = st.session_state.zoek_input
     st.session_state.app_state.current_page = 0
+    if "main_editor" in st.session_state:
+        st.session_state.main_editor["edited_rows"] = {}
 
 def render_zoekbalk():
     state = st.session_state.app_state
@@ -138,6 +140,8 @@ def render_zoekbalk():
     if c2.button("ZOEKEN", use_container_width=True):
         state.zoek_veld = zoekterm
         state.current_page = 0
+        if "main_editor" in st.session_state:
+            st.session_state.main_editor["edited_rows"] = {}
         st.rerun()
     return state.zoek_veld
 
@@ -162,6 +166,9 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             if cy.button("JA", use_container_width=True):
                 service.repo.delete_many(ids_to_act)
                 state.confirm_delete = False
+                # Opschonen status om KeyError te voorkomen
+                if "main_editor" in st.session_state:
+                    st.session_state.main_editor["edited_rows"] = {}
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
                 st.rerun()
             if cn.button("NEE", use_container_width=True):
@@ -220,22 +227,24 @@ def main():
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
 
-    # Sync Edits via unieke ID
+    # Sync Edits via unieke ID (Voorkomt KeyError)
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
             batch_updates = []
             for row_id_str, changes in edits.items():
                 row_id = int(row_id_str)
-                for col, val in changes.items():
-                    state.mijn_data.loc[state.mijn_data["id"] == row_id, col] = val
-                db_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
-                if db_changes:
-                    batch_updates.append({"id": row_id, **db_changes})
+                # Alleen syncen als ID nog bestaat in de data
+                if row_id in state.mijn_data["id"].values:
+                    for col, val in changes.items():
+                        state.mijn_data.loc[state.mijn_data["id"] == row_id, col] = val
+                    db_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
+                    if db_changes:
+                        batch_updates.append({"id": row_id, **db_changes})
             if batch_updates:
                 service.repo.bulk_update_fields(batch_updates)
 
-    # Paginering instellingen (25 rijen)
+    # Paginering (Strikt 25)
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
@@ -266,7 +275,6 @@ def main():
         hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"]
     )
 
-    # Paginering weergave: Pagina X van Y
     if num_pages > 1:
         p1, p2, p3 = st.columns([1, 2, 1])
         if p1.button("⬅️ VORIGE", use_container_width=True, disabled=state.current_page == 0):
@@ -281,6 +289,8 @@ def main():
     st.divider()
     if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
         st.cache_data.clear()
+        if "main_editor" in st.session_state:
+            st.session_state.main_editor["edited_rows"] = {}
         state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
 
 if __name__ == "__main__": main()
