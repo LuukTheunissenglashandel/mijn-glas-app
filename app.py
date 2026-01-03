@@ -136,19 +136,24 @@ def update_zoekterm():
     st.session_state.app_state.zoek_veld = st.session_state.zoek_input
     st.session_state.app_state.current_page = 0
 
+def wis_zoekopdracht():
+    """Callback functie om de zoekopdracht veilig te wissen zonder API error."""
+    st.session_state.app_state.zoek_veld = ""
+    st.session_state["zoek_input"] = ""
+    st.session_state.app_state.current_page = 0
+
 def render_zoekbalk():
     state = st.session_state.app_state
     c1, c2 = st.columns([7, 2])
     
-    # We koppelen de waarde aan state.zoek_veld om wissen mogelijk te maken
+    # We koppelen de waarde aan de key in session state
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
-                            value=state.zoek_veld, on_change=update_zoekterm)
+                            on_change=update_zoekterm)
     
     if state.zoek_veld:
-        if c2.button("✖ WISSEN", use_container_width=True):
-            state.zoek_veld = "" # Dit reset de value van de text_input bij de volgende render
-            state.current_page = 0
+        # Gebruik on_click callback om de session state te resetten VOORDAT de run begint
+        if c2.button("✖ WISSEN", use_container_width=True, on_click=wis_zoekopdracht):
             st.rerun()
     else:
         if c2.button("ZOEKEN", use_container_width=True):
@@ -263,20 +268,20 @@ def main():
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
 
-    # Berekening geselecteerde ruiten voor knoppen
+    # Berekening geselecteerde ruiten (opgeteld bij kolom 'aantal')
     geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
-    aantal_geselecteerd = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
-    btn_suffix = f" ({aantal_geselecteerd})" if aantal_geselecteerd > 0 else ""
+    totaal_ruiten = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
+    sel_suffix = f" ({totaal_ruiten})" if totaal_ruiten > 0 else ""
 
     actie_houder = st.container()
     
     c_sel1, c_sel2 = st.columns([1, 1])
-    if c_sel1.button(f"✅ ALLES SELECTEREN{btn_suffix}", use_container_width=True):
+    if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = True; st.rerun()
-    if c_sel2.button(f"⬜ ALLES DESELECTEREN{btn_suffix}", use_container_width=True):
+    if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = False; st.rerun()
 
-    # Paginering & Tabel
+    # Paginering
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
