@@ -31,6 +31,7 @@ class AppState:
     show_location_grid: bool = False
     current_page: int = 0
     loc_prefix: str = "B"
+    success_added: bool = False  # Vlag voor succesmelding
 
 # =============================================================================
 # 2. DATABASE REPOSITORY LAAG
@@ -118,7 +119,6 @@ def render_styling(logo_b64: str):
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
         div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; }}
-        /* Grijze balk verwijderd conform verzoek */
         </style>
     """, unsafe_allow_html=True)
 
@@ -162,7 +162,6 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
     ids_to_act = geselecteerd_df["id"].tolist()
     state = st.session_state.app_state
     
-    # Omhulsel verwijderd (was .action-box), knoppen blijven staan
     btn_col1, btn_col2 = st.columns(2)
     btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
     if btn_col1.button(btn_text, use_container_width=True):
@@ -302,6 +301,12 @@ def main():
     footer_col1, footer_col2 = st.columns([1, 1])
     with footer_col1:
         st.subheader("➕ Nieuwe ruit toevoegen")
+        
+        # Toon succesmelding als de vlag aan staat
+        if state.success_added:
+            st.success("Gelukt! De ruit(en) is/zijn toegevoegd.")
+            state.success_added = False # Reset voor de volgende interactie
+
         with st.form("nieuw_item_form", clear_on_submit=True):
             f1, f2 = st.columns(2)
             n_loc = f1.selectbox("Locatie", options=LOCATIE_OPTIES)
@@ -321,7 +326,7 @@ def main():
                     "omschrijving": str(n_omschrijving).strip() if n_omschrijving else None
                 })
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-                st.toast("Gelukt! De ruit(en) is/zijn toegevoegd.")
+                state.success_added = True # Zet de vlag aan
                 st.rerun()
 
     with footer_col2:
