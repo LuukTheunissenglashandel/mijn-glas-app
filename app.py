@@ -14,7 +14,7 @@ from contextlib import contextmanager
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
 WACHTWOORD = st.secrets["auth"]["password"]
-# Uitgebreide lijst met voorbeeldlocaties voor W en B om de werking te tonen
+# Uitgebreide lijst met locaties beginnend met B en W
 LOCATIE_OPTIES = [
     "BK", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", 
     "B11", "B12", "B13", "B14", "B15", "B16", "B17", "B18", "B19", "B20", "W0",
@@ -25,13 +25,13 @@ LOCATIE_OPTIES = [
 class AppState:
     ingelogd: bool = False
     mijn_data: pd.DataFrame = field(default_factory=pd.DataFrame)
-    bulk_loc: str = "HK"
+    bulk_loc: str = "BK"  # Aangepast naar BK
     zoek_veld: str = ""
     last_query: str = None
     confirm_delete: bool = False
     show_location_grid: bool = False
-    current_page: int = 0  # Nieuw voor paginering
-    loc_prefix: str = "H"  # Nieuw voor filteren locatieknoppen
+    current_page: int = 0
+    loc_prefix: str = "B"  # Aangepast naar B
 
 # =============================================================================
 # 2. DATABASE REPOSITORY LAAG
@@ -121,7 +121,7 @@ class VoorraadService:
         for num_col in ["aantal", "breedte", "hoogte"]: 
             df[num_col] = pd.to_numeric(df[num_col], errors="coerce")
         
-        df.loc[~df["locatie"].isin(LOCATIE_OPTIES), "locatie"] = "HK"
+        df.loc[~df["locatie"].isin(LOCATIE_OPTIES), "locatie"] = "BK" # Aangepast naar BK
         df["uit_voorraad"] = "Nee"
         return df.dropna(subset=["order_nummer"]).fillna(""), errors
 
@@ -218,7 +218,6 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
     
     if state.show_location_grid:
         st.divider()
-        # Rij met actieknop en de filters Wijchen/Boxmeer
         act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
         
         if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
@@ -235,8 +234,8 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             state.loc_prefix = "B"
             st.rerun()
 
-        # Grid filteren op basis van gekozen prefix
-        gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "HK"]
+        # Grid filteren op basis van gekozen prefix (B of W) of de hoofdlocatie BK
+        gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
         
         cols = st.columns(5)
         for i, loc in enumerate(gefilterde_locaties):
@@ -248,7 +247,7 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
 
 def render_beheer_sectie(service: VoorraadService):
     st.divider()
-    ex1, ex2 = st.columns(2)
+    ex1, x2 = st.columns(2)
     with ex1.expander("➕ Nieuwe Ruit"):
         with st.form("add_form", clear_on_submit=True):
             nieuwe_ruit = {"locatie": st.selectbox("Locatie", LOCATIE_OPTIES), "order_nummer": st.text_input("Ordernummer"), "aantal": st.number_input("Aantal", min_value=1, value=1), "breedte": st.number_input("Breedte", value=0), "hoogte": st.number_input("Hoogte", value=0), "omschrijving": st.text_input("Glas type"), "uit_voorraad": "Nee"}
@@ -256,7 +255,7 @@ def render_beheer_sectie(service: VoorraadService):
                 service.repo.insert_many([nieuwe_ruit])
                 st.session_state.app_state.mijn_data = service.laad_voorraad_df(st.session_state.app_state.zoek_veld)
                 st.rerun()
-    with ex2.expander("📥 Excel Import"):
+    with x2.expander("📥 Excel Import"):
         uploaded_file = st.file_uploader("Excel bestand", type=["xlsx"])
         if uploaded_file and st.button("UPLOAD NU", use_container_width=True):
             df_upload = pd.read_excel(uploaded_file)
@@ -305,19 +304,16 @@ def main():
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
 
-    # Paginering logica
     ROWS_PER_PAGE = 50
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
     
-    # Zorg dat we niet buiten bereik raken na een filter actie
     if state.current_page >= num_pages: state.current_page = 0
     
     start_idx = state.current_page * ROWS_PER_PAGE
     end_idx = start_idx + ROWS_PER_PAGE
     display_df = state.mijn_data.iloc[start_idx:end_idx].copy()
 
-    # Sync checkbox status
     if "main_editor" in st.session_state:
         edited_rows = st.session_state.main_editor.get("edited_rows", {})
         for row_idx, changes in edited_rows.items():
@@ -341,7 +337,6 @@ def main():
             st.session_state.main_editor["edited_rows"] = {}
         st.rerun()
     
-    # De Data Editor met de gefilterde (display_df) data
     edited_display_df = st.data_editor(
         display_df, 
         column_config={
@@ -357,7 +352,6 @@ def main():
         disabled=["id"]
     )
 
-    # Paginering controls
     if num_pages > 1:
         p1, p2, p3 = st.columns([1, 2, 1])
         if p1.button("⬅️ VORIGE", use_container_width=True, disabled=state.current_page == 0):
@@ -368,7 +362,6 @@ def main():
             state.current_page += 1
             st.rerun()
     
-    # Verwerk inline edits
     edits = st.session_state.main_editor.get("edited_rows", {})
     if edits and any(any(k != "Selecteren" for k in change.keys()) for change in edits.values()):
         if service.verwerk_inline_edits(display_df, edits):
