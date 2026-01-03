@@ -87,11 +87,16 @@ class VoorraadService:
     
     def laad_voorraad_df(self, zoekterm: str = "") -> pd.DataFrame:
         data = self.repo.get_data(zoekterm)
-        kolommen = ["Selecteren", "locatie", "aantal", "order_nummer", "omschrijving", "id"]
+        # HERSTELD: breedte en hoogte teruggezet in de lijst
+        kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
         if not data:
             return pd.DataFrame(columns=kolommen)
         df = pd.DataFrame(data)
         df["Selecteren"] = False
+        # Zorg dat alle kolommen bestaan in de DF
+        for col in kolommen:
+            if col not in df.columns:
+                df[col] = None
         return df[kolommen]
 
 # =============================================================================
@@ -159,6 +164,7 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
     ids_to_act = geselecteerd_df["id"].tolist()
     state = st.session_state.app_state
     
+    # Bereken totaal aantal ruiten geselecteerd
     total_aantal = geselecteerd_df["aantal"].sum()
     st.markdown(f'<div class="selection-info">Geselecteerd: {total_aantal} ruiten</div>', unsafe_allow_html=True)
     
@@ -263,7 +269,7 @@ def main():
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
 
-    # Paginering & Tabel
+    # Paginering
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
@@ -277,13 +283,16 @@ def main():
     if c_sel2.button("⬜ ALLES DESELECTEREN", use_container_width=True):
         state.mijn_data["Selecteren"] = False; st.rerun()
 
+    # De Tabel (HERSTELD: Breedte en Hoogte geconfigureerd)
     st.data_editor(
         display_df, 
         column_config={
             "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"), 
             "id": None, 
             "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
-            "aantal": st.column_config.NumberColumn("Aant.", width="small")
+            "aantal": st.column_config.NumberColumn("Aant.", width="small"),
+            "breedte": st.column_config.NumberColumn("Breedte", width="small"),
+            "hoogte": st.column_config.NumberColumn("Hoogte", width="small")
         }, 
         hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"]
     )
@@ -303,7 +312,7 @@ def main():
 
     st.divider()
 
-    # Footer sectie: Nieuw toevoegen & Import
+    # Footer sectie
     footer_col1, footer_col2 = st.columns([1, 1])
     
     with footer_col1:
@@ -312,10 +321,23 @@ def main():
             f1, f2 = st.columns(2)
             n_loc = f1.selectbox("Locatie", options=LOCATIE_OPTIES)
             n_aantal = f2.number_input("Aantal", min_value=1, value=1)
+            
+            f3, f4 = st.columns(2)
+            n_breedte = f3.number_input("Breedte (mm)", min_value=0, value=0)
+            n_hoogte = f4.number_input("Hoogte (mm)", min_value=0, value=0)
+            
             n_order = st.text_input("Ordernummer", placeholder="Ordernr...")
-            n_omschrijving = st.text_input("Omschrijving", placeholder="Breedte x Hoogte, type glas...")
+            n_omschrijving = st.text_input("Omschrijving", placeholder="Type glas, bijzonderheden...")
+            
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
-                service.repo.insert_one({"locatie": n_loc, "aantal": n_aantal, "order_nummer": n_order, "omschrijving": n_omschrijving})
+                service.repo.insert_one({
+                    "locatie": n_loc, 
+                    "aantal": n_aantal, 
+                    "breedte": n_breedte,
+                    "hoogte": n_hoogte,
+                    "order_nummer": n_order, 
+                    "omschrijving": n_omschrijving
+                })
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
                 st.rerun()
 
@@ -329,7 +351,7 @@ def main():
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
         
-        st.write("") # Spatiëring
+        st.write("") 
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             st.cache_data.clear(); state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
 
