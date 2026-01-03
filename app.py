@@ -58,9 +58,10 @@ class GlasVoorraadRepository:
             result = query.order("id").execute()
             return result.data
     
-    def insert_one(self, record: Dict[str, Any]):
-        with self._handle_errors("rij toevoegen"):
-            self.client.table(self.table).insert(record).execute()
+    def insert_many(self, records: List[Dict[str, Any]]) -> bool:
+        with self._handle_errors("toevoegen records"):
+            self.client.table(self.table).insert(records).execute()
+            return True
     
     def bulk_update_location(self, ids: List[int], nieuwe_locatie: str) -> bool:
         with self._handle_errors("locatie update"):
@@ -93,6 +94,22 @@ class VoorraadService:
         df["Selecteren"] = False
         kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
         return df[kolommen]
+
+    def valideer_excel_import(self, df: pd.DataFrame) -> tuple[pd.DataFrame, List[str]]:
+        errors = []
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        mapping = {"order": "order_nummer", "ordernummer": "order_nummer", "aantal_stuks": "aantal", "qty": "aantal", "glastype": "omschrijving", "type": "omschrijving"}
+        df = df.rename(columns=mapping)
+        
+        required = {"locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"}
+        missing = required - set(df.columns)
+        if missing: return pd.DataFrame(), [f"❌ Ontbrekende kolommen: {', '.join(missing)}"]
+        
+        for num_col in ["aantal", "breedte", "hoogte"]: 
+            df[num_col] = pd.to_numeric(df[num_col], errors="coerce")
+        
+        df.loc[~df["locatie"].isin(LOCATIE_OPTIES), "locatie"] = "BK"
+        return df.dropna(subset=["order_nummer"]).fillna(""), errors
 
 # =============================================================================
 # 4. UI HELPER FUNCTIES
@@ -197,6 +214,37 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
                     state.bulk_loc = loc; st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
+def render_beheer_sectie(service: VoorraadService):
+    st.divider()
+    ex1, ex2 = st.columns(2)
+    with ex1.expander("➕ Nieuwe Ruit"):
+        with st.form("add_form", clear_on_submit=True):
+            nieuwe_ruit = {
+                "locatie": st.selectbox("Locatie", LOCATIE_OPTIES),
+                "order_nummer": st.text_input("Ordernummer"),
+                "aantal": st.number_input("Aantal", min_value=1, value=1),
+                "breedte": st.number_input("Breedte", value=0),
+                "hoogte": st.number_input("Hoogte", value=0),
+                "omschrijving": st.text_input("Glas type")
+            }
+            if st.form_submit_button("VOEG TOE", use_container_width=True):
+                service.repo.insert_many([nieuwe_ruit])
+                st.session_state.app_state.mijn_data = service.laad_voorraad_df(st.session_state.app_state.zoek_veld)
+                st.rerun()
+    with ex2.expander("📥 Excel Import"):
+        uploaded_file = st.file_uploader("Excel bestand", type=["xlsx"])
+        if uploaded_file and st.button("UPLOAD NU", use_container_width=True):
+            try:
+                df_upload = pd.read_excel(uploaded_file)
+                df_normalized, _ = service.valideer_excel_import(df_upload)
+                if not df_normalized.empty:
+                    service.repo.insert_many(df_normalized[["locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]].to_dict(orient="records"))
+                    st.session_state.app_state.mijn_data = service.laad_voorraad_df(st.session_state.app_state.zoek_veld)
+                    st.success("Import geslaagd!")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Fout bij inlezen: {e}")
+
 # =============================================================================
 # 5. INITIALISATIE & MAIN
 # =============================================================================
@@ -257,7 +305,6 @@ def main():
 
     actie_houder = st.container()
 
-    # Berekening geselecteerd aantal (FIX voor KeyError)
     if not state.mijn_data.empty and "Selecteren" in state.mijn_data.columns and "aantal" in state.mijn_data.columns:
         aantal_geselecteerd = int(state.mijn_data.loc[state.mijn_data["Selecteren"] == True, "aantal"].sum())
     else:
@@ -265,15 +312,11 @@ def main():
         
     tonen_getal = f" ({aantal_geselecteerd})" if aantal_geselecteerd > 0 else ""
 
-    # Knoppenbalk: Selectie & Handmatige Invoer
-    col_sel1, col_sel2, col_sel3 = st.columns([2, 2, 2])
+    col_sel1, col_sel2, _ = st.columns([2, 2, 5])
     if col_sel1.button(f"✅ ALLES SELECTEREN{tonen_getal}", use_container_width=True):
         state.mijn_data["Selecteren"] = True; st.rerun()
     if col_sel2.button(f"⬜ ALLES DESELECTEREN", use_container_width=True):
         state.mijn_data["Selecteren"] = False; st.rerun()
-    if col_sel3.button("➕ NIEUWE RIJ TOEVOEGEN", use_container_width=True):
-        service.repo.insert_one({"locatie": "BK", "aantal": 1, "order_nummer": "NIEUW", "omschrijving": ""})
-        state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
     
     st.data_editor(
         display_df, 
@@ -298,27 +341,12 @@ def main():
         if not state.mijn_data.empty and "Selecteren" in state.mijn_data.columns:
             render_batch_acties(state.mijn_data[state.mijn_data["Selecteren"] == True], service)
     
-    st.divider()
+    render_beheer_sectie(service)
     
-    # Bulk Import & Verversen
-    imp_col1, imp_col2 = st.columns([2, 1])
-    with imp_col1:
-        uploaded_file = st.file_uploader("📥 Bulk import Excel (.xlsx)", type=["xlsx"], label_visibility="collapsed")
-        if uploaded_file:
-            try:
-                df_import = pd.read_excel(uploaded_file)
-                if st.button("🚀 IMPORT STARTEN", use_container_width=True):
-                    service.repo.bulk_update_fields(df_import.to_dict('records'))
-                    st.success("Import geslaagd!")
-                    state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
-            except Exception as e:
-                st.error(f"Fout bij inlezen: {e}")
-
-    with imp_col2:
-        if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
-            st.cache_data.clear()
-            if "main_editor" in st.session_state:
-                st.session_state.main_editor["edited_rows"] = {}
-            state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
+    if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
+        st.cache_data.clear()
+        if "main_editor" in st.session_state:
+            st.session_state.main_editor["edited_rows"] = {}
+        state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
 
 if __name__ == "__main__": main()
