@@ -140,17 +140,14 @@ def render_zoekbalk():
     state = st.session_state.app_state
     c1, c2 = st.columns([7, 2])
     
-    # We gebruiken de key 'zoek_input' direct
+    # We koppelen de waarde aan state.zoek_veld om wissen mogelijk te maken
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
                             value=state.zoek_veld, on_change=update_zoekterm)
     
     if state.zoek_veld:
         if c2.button("✖ WISSEN", use_container_width=True):
-            state.zoek_veld = ""
-            # Fix voor wissen zonder API error
-            if "zoek_input" in st.session_state:
-                st.session_state.zoek_input = ""
+            state.zoek_veld = "" # Dit reset de value van de text_input bij de volgende render
             state.current_page = 0
             st.rerun()
     else:
@@ -266,27 +263,25 @@ def main():
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
 
-    # Paginering
+    # Berekening geselecteerde ruiten voor knoppen
+    geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
+    aantal_geselecteerd = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
+    btn_suffix = f" ({aantal_geselecteerd})" if aantal_geselecteerd > 0 else ""
+
+    actie_houder = st.container()
+    
+    c_sel1, c_sel2 = st.columns([1, 1])
+    if c_sel1.button(f"✅ ALLES SELECTEREN{btn_suffix}", use_container_width=True):
+        state.mijn_data["Selecteren"] = True; st.rerun()
+    if c_sel2.button(f"⬜ ALLES DESELECTEREN{btn_suffix}", use_container_width=True):
+        state.mijn_data["Selecteren"] = False; st.rerun()
+
+    # Paginering & Tabel
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
     display_df = state.mijn_data.iloc[state.current_page * ROWS_PER_PAGE : (state.current_page + 1) * ROWS_PER_PAGE].copy()
 
-    actie_houder = st.container()
-    
-    # Bereken selectie aantallen voor de knoppen
-    sel_rows = state.mijn_data[state.mijn_data["Selecteren"] == True]
-    totaal_geselecteerd = int(sel_rows["aantal"].sum()) if not sel_rows.empty else 0
-    
-    suffix = f" ({totaal_geselecteerd})" if totaal_geselecteerd > 0 else ""
-    
-    c_sel1, c_sel2 = st.columns([1, 1])
-    if c_sel1.button(f"✅ ALLES SELECTEREN{suffix}", use_container_width=True):
-        state.mijn_data["Selecteren"] = True; st.rerun()
-    if c_sel2.button(f"⬜ ALLES DESELECTEREN{suffix}", use_container_width=True):
-        state.mijn_data["Selecteren"] = False; st.rerun()
-
-    # De Tabel
     st.data_editor(
         display_df, 
         column_config={
@@ -309,12 +304,12 @@ def main():
             state.current_page += 1; st.rerun()
 
     with actie_houder: 
-        if not sel_rows.empty:
-            render_batch_acties(sel_rows, service)
+        if not geselecteerd_df.empty:
+            render_batch_acties(geselecteerd_df, service)
 
     st.divider()
 
-    # Footer sectie: Nieuw toevoegen & Import
+    # Footer sectie
     footer_col1, footer_col2 = st.columns([1, 1])
     
     with footer_col1:
