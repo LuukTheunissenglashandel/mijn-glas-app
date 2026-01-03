@@ -309,13 +309,12 @@ def main():
             f3, f4 = st.columns(2)
             n_breedte = f3.number_input("Breedte (mm)", min_value=0, value=0)
             n_hoogte = f4.number_input("Hoogte (mm)", min_value=0, value=0)
-            n_order = st.text_input("Ordernummer", placeholder="Cijfers en letters toegestaan...")
+            n_order = st.text_input("Ordernummer", placeholder="Letters en cijfers toegestaan...")
             n_omschrijving = st.text_input("Omschrijving", placeholder="Type glas...")
             
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
                 service.repo.insert_one({
-                    "locatie": n_loc, 
-                    "aantal": n_aantal, 
+                    "locatie": n_loc, "aantal": n_aantal, 
                     "breedte": n_breedte if n_breedte > 0 else None,
                     "hoogte": n_hoogte if n_hoogte > 0 else None,
                     "order_nummer": str(n_order).strip() if n_order else None, 
@@ -330,7 +329,13 @@ def main():
         if uploaded_file and st.button("🚀 IMPORT STARTEN", use_container_width=True):
             try:
                 df_import = pd.read_excel(uploaded_file)
+                # Normaliseren van kolomnamen
                 df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
+                
+                # FIX: Als de kolom 'order' heet, hernoemen naar 'order_nummer'
+                if 'order' in df_import.columns:
+                    df_import = df_import.rename(columns={'order': 'order_nummer'})
+                
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
