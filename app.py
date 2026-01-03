@@ -144,11 +144,9 @@ def wis_zoekopdracht():
 def render_zoekbalk():
     state = st.session_state.app_state
     c1, c2 = st.columns([7, 2])
-    
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
                             on_change=update_zoekterm)
-    
     if state.zoek_veld:
         if c2.button("✖ WISSEN", use_container_width=True, on_click=wis_zoekopdracht):
             st.rerun()
@@ -163,15 +161,12 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
     if geselecteerd_df.empty: return
     ids_to_act = geselecteerd_df["id"].tolist()
     state = st.session_state.app_state
-    
     st.markdown('<div class="action-box">', unsafe_allow_html=True)
     btn_col1, btn_col2 = st.columns(2)
-    
     btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
     if btn_col1.button(btn_text, use_container_width=True):
         state.show_location_grid = not state.show_location_grid
         st.rerun()
-        
     if not state.confirm_delete:
         if btn_col2.button("🗑️ MEEGENOMEN", use_container_width=True):
             state.confirm_delete = True
@@ -188,7 +183,6 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             if cn.button("NEE", use_container_width=True):
                 state.confirm_delete = False
                 st.rerun()
-
     if state.show_location_grid:
         st.divider()
         act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
@@ -201,7 +195,6 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             state.loc_prefix = "W"; st.rerun()
         if act_col3.button("📍 Boxmeer", use_container_width=True):
             state.loc_prefix = "B"; st.rerun()
-        
         gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
         cols = st.columns(5)
         for i, loc in enumerate(gefilterde_locaties):
@@ -244,7 +237,6 @@ def main():
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
 
-    # Sync edits
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
@@ -265,20 +257,17 @@ def main():
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
 
-    # Berekening geselecteerde ruiten
     geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
     totaal_ruiten = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
     sel_suffix = f" ({totaal_ruiten})" if totaal_ruiten > 0 else ""
 
     actie_houder = st.container()
-    
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = True; st.rerun()
     if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = False; st.rerun()
 
-    # Paginering & Tabel
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
@@ -306,14 +295,11 @@ def main():
             state.current_page += 1; st.rerun()
 
     with actie_houder: 
-        if not geselecteerd_df.empty:
-            render_batch_acties(geselecteerd_df, service)
+        if not geselecteerd_df.empty: render_batch_acties(geselecteerd_df, service)
 
     st.divider()
 
-    # Footer sectie
     footer_col1, footer_col2 = st.columns([1, 1])
-    
     with footer_col1:
         st.subheader("➕ Nieuwe ruit toevoegen")
         with st.form("nieuw_item_form", clear_on_submit=True):
@@ -323,13 +309,17 @@ def main():
             f3, f4 = st.columns(2)
             n_breedte = f3.number_input("Breedte (mm)", min_value=0, value=0)
             n_hoogte = f4.number_input("Hoogte (mm)", min_value=0, value=0)
-            n_order = st.text_input("Ordernummer", placeholder="Ordernr...")
+            n_order = st.text_input("Ordernummer", placeholder="Cijfers en letters toegestaan...")
             n_omschrijving = st.text_input("Omschrijving", placeholder="Type glas...")
             
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
                 service.repo.insert_one({
-                    "locatie": n_loc, "aantal": n_aantal, "breedte": n_breedte,
-                    "hoogte": n_hoogte, "order_nummer": n_order, "omschrijving": n_omschrijving
+                    "locatie": n_loc, 
+                    "aantal": n_aantal, 
+                    "breedte": n_breedte if n_breedte > 0 else None,
+                    "hoogte": n_hoogte if n_hoogte > 0 else None,
+                    "order_nummer": str(n_order).strip() if n_order else None, 
+                    "omschrijving": str(n_omschrijving).strip() if n_omschrijving else None
                 })
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
                 st.rerun()
@@ -340,16 +330,12 @@ def main():
         if uploaded_file and st.button("🚀 IMPORT STARTEN", use_container_width=True):
             try:
                 df_import = pd.read_excel(uploaded_file)
-                # REPARATIE: Zet alle kolomnamen om naar kleine letters en vervang spaties door underscores
                 df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
-                # Filter alleen de kolommen die de database verwacht
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
-                
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
-        
         st.write("") 
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             st.cache_data.clear(); state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
