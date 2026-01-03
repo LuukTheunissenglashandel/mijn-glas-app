@@ -31,7 +31,7 @@ class AppState:
     show_location_grid: bool = False
     current_page: int = 0
     loc_prefix: str = "B"
-    success_added: bool = False  # Vlag voor succesmelding
+    success_msg: str = ""
 
 # =============================================================================
 # 2. DATABASE REPOSITORY LAAG
@@ -138,7 +138,7 @@ def update_zoekterm():
 
 def wis_zoekopdracht():
     st.session_state.app_state.zoek_veld = ""
-    st.session_state["zoek_input"] = ""
+    st.session_state.zoek_input = ""
     st.session_state.app_state.current_page = 0
 
 def render_zoekbalk():
@@ -232,10 +232,21 @@ def main():
     render_header(logo_b64)
     zoekterm = render_zoekbalk()
     
+    # DATA LADEN & SELECTIES BEWAREN
     if state.mijn_data.empty or state.last_query != zoekterm:
+        # Sla IDs van geselecteerde rijen op voordat de data ververst
+        geselecteerde_ids = []
+        if not state.mijn_data.empty and "Selecteren" in state.mijn_data.columns:
+            geselecteerde_ids = state.mijn_data[state.mijn_data["Selecteren"] == True]["id"].tolist()
+        
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
+        
+        # Zet de vinkjes terug in de nieuwe dataset
+        if geselecteerde_ids:
+            state.mijn_data.loc[state.mijn_data["id"].isin(geselecteerde_ids), "Selecteren"] = True
 
+    # SYNC EDITS
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
@@ -243,24 +254,34 @@ def main():
             temp_start = state.current_page * ROWS_PER_PAGE
             display_slice = state.mijn_data.iloc[temp_start : temp_start + ROWS_PER_PAGE]
             db_updates = []
+            
             for row_idx_str, changes in edits.items():
                 real_idx = display_slice.index[int(row_idx_str)]
                 row_id = state.mijn_data.at[real_idx, "id"]
+                
                 for col, val in changes.items():
                     state.mijn_data.at[real_idx, col] = val
+                
                 clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
                 if clean_changes:
                     db_updates.append({"id": int(row_id), **clean_changes})
+            
             if db_updates:
                 service.repo.bulk_update_fields(db_updates)
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-            st.rerun()
+                # Herstel selecties na DB reload
+                geselecteerde_ids = state.mijn_data[state.mijn_data["Selecteren"] == True]["id"].tolist()
+                if geselecteerde_ids:
+                    state.mijn_data.loc[state.mijn_data["id"].isin(geselecteerde_ids), "Selecteren"] = True
+                st.rerun()
 
+    # Berekening geselecteerde ruiten voor knoppen
     geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
     totaal_ruiten = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
     sel_suffix = f" ({totaal_ruiten})" if totaal_ruiten > 0 else ""
 
     actie_houder = st.container()
+    
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = True; st.rerun()
@@ -301,11 +322,9 @@ def main():
     footer_col1, footer_col2 = st.columns([1, 1])
     with footer_col1:
         st.subheader("➕ Nieuwe ruit toevoegen")
-        
-        # Toon succesmelding als de vlag aan staat
-        if state.success_added:
-            st.success("Gelukt! De ruit(en) is/zijn toegevoegd.")
-            state.success_added = False # Reset voor de volgende interactie
+        if state.success_msg:
+            st.success(state.success_msg)
+            state.success_msg = "" 
 
         with st.form("nieuw_item_form", clear_on_submit=True):
             f1, f2 = st.columns(2)
@@ -326,7 +345,7 @@ def main():
                     "omschrijving": str(n_omschrijving).strip() if n_omschrijving else None
                 })
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-                state.success_added = True # Zet de vlag aan
+                state.success_msg = "Gelukt! De ruit(en) is/zijn toegevoegd."
                 st.rerun()
 
     with footer_col2:
