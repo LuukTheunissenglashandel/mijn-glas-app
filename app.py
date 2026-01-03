@@ -118,7 +118,7 @@ def render_styling(logo_b64: str):
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
         div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; }}
-        .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 15px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
+        /* Grijze balk verwijderd conform verzoek */
         </style>
     """, unsafe_allow_html=True)
 
@@ -161,7 +161,8 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
     if geselecteerd_df.empty: return
     ids_to_act = geselecteerd_df["id"].tolist()
     state = st.session_state.app_state
-    st.markdown('<div class="action-box">', unsafe_allow_html=True)
+    
+    # Omhulsel verwijderd (was .action-box), knoppen blijven staan
     btn_col1, btn_col2 = st.columns(2)
     btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
     if btn_col1.button(btn_text, use_container_width=True):
@@ -201,7 +202,6 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             with cols[i % 5]:
                 if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
                     state.bulk_loc = loc; st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # =============================================================================
 # 5. INITIALISATIE & MAIN
@@ -321,6 +321,7 @@ def main():
                     "omschrijving": str(n_omschrijving).strip() if n_omschrijving else None
                 })
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
+                st.toast("Gelukt! De ruit(en) is/zijn toegevoegd.")
                 st.rerun()
 
     with footer_col2:
@@ -329,13 +330,9 @@ def main():
         if uploaded_file and st.button("🚀 IMPORT STARTEN", use_container_width=True):
             try:
                 df_import = pd.read_excel(uploaded_file)
-                # Normaliseren van kolomnamen
                 df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
-                
-                # FIX: Als de kolom 'order' heet, hernoemen naar 'order_nummer'
                 if 'order' in df_import.columns:
                     df_import = df_import.rename(columns={'order': 'order_nummer'})
-                
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
