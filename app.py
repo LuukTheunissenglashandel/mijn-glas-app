@@ -87,13 +87,11 @@ class VoorraadService:
     
     def laad_voorraad_df(self, zoekterm: str = "") -> pd.DataFrame:
         data = self.repo.get_data(zoekterm)
-        # HERSTELD: breedte en hoogte teruggezet in de lijst
         kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
         if not data:
             return pd.DataFrame(columns=kolommen)
         df = pd.DataFrame(data)
         df["Selecteren"] = False
-        # Zorg dat alle kolommen bestaan in de DF
         for col in kolommen:
             if col not in df.columns:
                 df[col] = None
@@ -121,7 +119,6 @@ def render_styling(logo_b64: str):
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
         div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; }}
         .action-box {{ background-color: #f8f9fa; border-radius: 10px; padding: 15px; margin-bottom: 10px; border: 1px solid #dee2e6; }}
-        .selection-info {{ background-color: #e1f5fe; padding: 10px; border-radius: 8px; border: 1px solid #01579b; margin-bottom: 10px; text-align: center; font-weight: bold; }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -143,6 +140,7 @@ def render_zoekbalk():
     state = st.session_state.app_state
     c1, c2 = st.columns([7, 2])
     
+    # We gebruiken de key 'zoek_input' direct
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
                             value=state.zoek_veld, on_change=update_zoekterm)
@@ -150,6 +148,9 @@ def render_zoekbalk():
     if state.zoek_veld:
         if c2.button("✖ WISSEN", use_container_width=True):
             state.zoek_veld = ""
+            # Fix voor wissen zonder API error
+            if "zoek_input" in st.session_state:
+                st.session_state.zoek_input = ""
             state.current_page = 0
             st.rerun()
     else:
@@ -163,10 +164,6 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
     if geselecteerd_df.empty: return
     ids_to_act = geselecteerd_df["id"].tolist()
     state = st.session_state.app_state
-    
-    # Bereken totaal aantal ruiten geselecteerd
-    total_aantal = geselecteerd_df["aantal"].sum()
-    st.markdown(f'<div class="selection-info">Geselecteerd: {total_aantal} ruiten</div>', unsafe_allow_html=True)
     
     st.markdown('<div class="action-box">', unsafe_allow_html=True)
     btn_col1, btn_col2 = st.columns(2)
@@ -277,13 +274,19 @@ def main():
 
     actie_houder = st.container()
     
+    # Bereken selectie aantallen voor de knoppen
+    sel_rows = state.mijn_data[state.mijn_data["Selecteren"] == True]
+    totaal_geselecteerd = int(sel_rows["aantal"].sum()) if not sel_rows.empty else 0
+    
+    suffix = f" ({totaal_geselecteerd})" if totaal_geselecteerd > 0 else ""
+    
     c_sel1, c_sel2 = st.columns([1, 1])
-    if c_sel1.button("✅ ALLES SELECTEREN", use_container_width=True):
+    if c_sel1.button(f"✅ ALLES SELECTEREN{suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = True; st.rerun()
-    if c_sel2.button("⬜ ALLES DESELECTEREN", use_container_width=True):
+    if c_sel2.button(f"⬜ ALLES DESELECTEREN{suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = False; st.rerun()
 
-    # De Tabel (HERSTELD: Breedte en Hoogte geconfigureerd)
+    # De Tabel
     st.data_editor(
         display_df, 
         column_config={
@@ -306,13 +309,12 @@ def main():
             state.current_page += 1; st.rerun()
 
     with actie_houder: 
-        selected_rows = state.mijn_data[state.mijn_data["Selecteren"] == True]
-        if not selected_rows.empty:
-            render_batch_acties(selected_rows, service)
+        if not sel_rows.empty:
+            render_batch_acties(sel_rows, service)
 
     st.divider()
 
-    # Footer sectie
+    # Footer sectie: Nieuw toevoegen & Import
     footer_col1, footer_col2 = st.columns([1, 1])
     
     with footer_col1:
