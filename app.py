@@ -87,11 +87,15 @@ class VoorraadService:
     
     def laad_voorraad_df(self, zoekterm: str = "") -> pd.DataFrame:
         data = self.repo.get_data(zoekterm)
+        kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
         if not data:
-            return pd.DataFrame(columns=["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"])
+            return pd.DataFrame(columns=kolommen)
         df = pd.DataFrame(data)
         df["Selecteren"] = False
-        kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
+        # Zorg dat alle kolommen aanwezig zijn, zelfs als ze leeg zijn in de DB
+        for col in kolommen:
+            if col not in df.columns:
+                df[col] = None
         return df[kolommen]
 
 # =============================================================================
@@ -136,14 +140,18 @@ def update_zoekterm():
 def render_zoekbalk():
     state = st.session_state.app_state
     c1, c2 = st.columns([7, 2])
+    
+    # Gebruik een fallback waarde als zoek_input niet in session_state staat
+    zoek_val = state.zoek_veld
+    
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
-                            value=state.zoek_veld, on_change=update_zoekterm)
+                            value=zoek_val, on_change=update_zoekterm)
     
-    # Wissen knop verschijnt alleen als er een zoekterm is
     if state.zoek_veld:
         if c2.button("✖ WISSEN", use_container_width=True):
             state.zoek_veld = ""
+            # FIX: Gebruik de key van de widget om de waarde te resetten in plaats van session_state direct
             st.session_state.zoek_input = ""
             state.current_page = 0
             st.rerun()
@@ -242,18 +250,29 @@ def main():
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
-            temp_start = state.current_page * 25
-            current_page_ids = state.mijn_data.iloc[temp_start : temp_start + 25]["id"].tolist()
+            ROWS_PER_PAGE = 25
+            temp_start = state.current_page * ROWS_PER_PAGE
+            display_slice = state.mijn_data.iloc[temp_start : temp_start + ROWS_PER_PAGE]
+            
             db_updates = []
             for row_idx_str, changes in edits.items():
-                row_id = current_page_ids[int(row_idx_str)]
-                if "Selecteren" in changes:
-                    state.mijn_data.loc[state.mijn_data["id"] == row_id, "Selecteren"] = changes["Selecteren"]
+                row_idx = int(row_idx_str)
+                # Vind de echte ID van de rij in de hoofd-dataframe
+                real_idx = display_slice.index[row_idx]
+                row_id = state.mijn_data.at[real_idx, "id"]
+                
+                # Update de lokale dataframe onmiddellijk voor de vinkjes
+                for col, val in changes.items():
+                    state.mijn_data.at[real_idx, col] = val
+                
+                # Verzamel database updates (alles behalve de selectie-kolom)
                 clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
                 if clean_changes:
                     db_updates.append({"id": int(row_id), **clean_changes})
+            
             if db_updates:
                 service.repo.bulk_update_fields(db_updates)
+                # Herlaad alleen als er database wijzigingen waren
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
 
@@ -263,7 +282,7 @@ def main():
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
     display_df = state.mijn_data.iloc[state.current_page * ROWS_PER_PAGE : (state.current_page + 1) * ROWS_PER_PAGE].copy()
 
-    # Batch actie knoppen
+    # Batch actie knoppen container
     actie_houder = st.container()
     
     # Selectie knoppen
@@ -294,7 +313,6 @@ def main():
         if p3.button("VOLGENDE ➡️", use_container_width=True, disabled=state.current_page == num_pages - 1):
             state.current_page += 1; st.rerun()
 
-    # NIEUWE FUNCTIONALITEIT: Expander onder de tabel
     with st.expander("➕ Nieuwe ruit(en) toevoegen"):
         with st.form("nieuw_item_form", clear_on_submit=True):
             f1, f2, f3 = st.columns([1, 1, 2])
