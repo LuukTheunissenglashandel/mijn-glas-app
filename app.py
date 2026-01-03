@@ -58,6 +58,10 @@ class GlasVoorraadRepository:
             result = query.order("id").execute()
             return result.data
     
+    def insert_one(self, record: Dict[str, Any]):
+        with self._handle_errors("rij toevoegen"):
+            self.client.table(self.table).insert(record).execute()
+    
     def bulk_update_location(self, ids: List[int], nieuwe_locatie: str) -> bool:
         with self._handle_errors("locatie update"):
             self.client.table(self.table).update({"locatie": nieuwe_locatie}).in_("id", ids).execute()
@@ -166,7 +170,6 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             if cy.button("JA", use_container_width=True):
                 service.repo.delete_many(ids_to_act)
                 state.confirm_delete = False
-                # Opschonen status om KeyError te voorkomen
                 if "main_editor" in st.session_state:
                     st.session_state.main_editor["edited_rows"] = {}
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
@@ -227,14 +230,12 @@ def main():
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
 
-    # Sync Edits via unieke ID (Voorkomt KeyError)
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
             batch_updates = []
             for row_id_str, changes in edits.items():
                 row_id = int(row_id_str)
-                # Alleen syncen als ID nog bestaat in de data
                 if row_id in state.mijn_data["id"].values:
                     for col, val in changes.items():
                         state.mijn_data.loc[state.mijn_data["id"] == row_id, col] = val
@@ -244,7 +245,7 @@ def main():
             if batch_updates:
                 service.repo.bulk_update_fields(batch_updates)
 
-    # Paginering (Strikt 25)
+    # Paginering & Weergave
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
@@ -255,8 +256,8 @@ def main():
     display_df.set_index("id", inplace=True, drop=False)
 
     actie_houder = st.container()
-    
-    # FIX: Veiligere berekening van de som om KeyError te voorkomen
+
+    # Berekening geselecteerd aantal (FIX voor KeyError)
     if not state.mijn_data.empty and "Selecteren" in state.mijn_data.columns and "aantal" in state.mijn_data.columns:
         aantal_geselecteerd = int(state.mijn_data.loc[state.mijn_data["Selecteren"] == True, "aantal"].sum())
     else:
@@ -264,11 +265,15 @@ def main():
         
     tonen_getal = f" ({aantal_geselecteerd})" if aantal_geselecteerd > 0 else ""
 
-    col_sel1, col_sel2, _ = st.columns([2, 2, 5])
+    # Knoppenbalk: Selectie & Handmatige Invoer
+    col_sel1, col_sel2, col_sel3 = st.columns([2, 2, 2])
     if col_sel1.button(f"✅ ALLES SELECTEREN{tonen_getal}", use_container_width=True):
         state.mijn_data["Selecteren"] = True; st.rerun()
     if col_sel2.button(f"⬜ ALLES DESELECTEREN", use_container_width=True):
         state.mijn_data["Selecteren"] = False; st.rerun()
+    if col_sel3.button("➕ NIEUWE RIJ TOEVOEGEN", use_container_width=True):
+        service.repo.insert_one({"locatie": "BK", "aantal": 1, "order_nummer": "NIEUW", "omschrijving": ""})
+        state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
     
     st.data_editor(
         display_df, 
@@ -290,14 +295,30 @@ def main():
             state.current_page += 1; st.rerun()
     
     with actie_houder: 
-        # Gebruik de veilige filtermethode hier ook
-        render_batch_acties(state.mijn_data[state.mijn_data["Selecteren"] == True] if "Selecteren" in state.mijn_data.columns else pd.DataFrame(), service)
+        if not state.mijn_data.empty and "Selecteren" in state.mijn_data.columns:
+            render_batch_acties(state.mijn_data[state.mijn_data["Selecteren"] == True], service)
     
     st.divider()
-    if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
-        st.cache_data.clear()
-        if "main_editor" in st.session_state:
-            st.session_state.main_editor["edited_rows"] = {}
-        state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
+    
+    # Bulk Import & Verversen
+    imp_col1, imp_col2 = st.columns([2, 1])
+    with imp_col1:
+        uploaded_file = st.file_uploader("📥 Bulk import Excel (.xlsx)", type=["xlsx"], label_visibility="collapsed")
+        if uploaded_file:
+            try:
+                df_import = pd.read_excel(uploaded_file)
+                if st.button("🚀 IMPORT STARTEN", use_container_width=True):
+                    service.repo.bulk_update_fields(df_import.to_dict('records'))
+                    st.success("Import geslaagd!")
+                    state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
+            except Exception as e:
+                st.error(f"Fout bij inlezen: {e}")
+
+    with imp_col2:
+        if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
+            st.cache_data.clear()
+            if "main_editor" in st.session_state:
+                st.session_state.main_editor["edited_rows"] = {}
+            state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
 
 if __name__ == "__main__": main()
