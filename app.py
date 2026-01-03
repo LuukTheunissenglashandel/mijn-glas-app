@@ -31,7 +31,7 @@ class AppState:
     show_location_grid: bool = False
     current_page: int = 0
     loc_prefix: str = "B"
-    success_added: bool = False  # Vlag voor succesmelding
+    success_added: bool = False
 
 # =============================================================================
 # 2. DATABASE REPOSITORY LAAG
@@ -236,6 +236,7 @@ def main():
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
 
+    # GEOPTIMALISEERDE SYNC: Voorkomt verspringen bij checkbox selectie
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
@@ -248,13 +249,17 @@ def main():
                 row_id = state.mijn_data.at[real_idx, "id"]
                 for col, val in changes.items():
                     state.mijn_data.at[real_idx, col] = val
+                
+                # Alleen DB updates verzamelen als er meer dan alleen 'Selecteren' gewijzigd is
                 clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
                 if clean_changes:
                     db_updates.append({"id": int(row_id), **clean_changes})
+            
+            # Alleen rerun en herladen als de database echt is bijgewerkt
             if db_updates:
                 service.repo.bulk_update_fields(db_updates)
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-            st.rerun()
+                st.rerun()
 
     geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
     totaal_ruiten = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
@@ -301,11 +306,9 @@ def main():
     footer_col1, footer_col2 = st.columns([1, 1])
     with footer_col1:
         st.subheader("➕ Nieuwe ruit toevoegen")
-        
-        # Toon succesmelding als de vlag aan staat
         if state.success_added:
             st.success("Gelukt! De ruit(en) is/zijn toegevoegd.")
-            state.success_added = False # Reset voor de volgende interactie
+            state.success_added = False 
 
         with st.form("nieuw_item_form", clear_on_submit=True):
             f1, f2 = st.columns(2)
@@ -326,7 +329,7 @@ def main():
                     "omschrijving": str(n_omschrijving).strip() if n_omschrijving else None
                 })
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-                state.success_added = True # Zet de vlag aan
+                state.success_added = True
                 st.rerun()
 
     with footer_col2:
