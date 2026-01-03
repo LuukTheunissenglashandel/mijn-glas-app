@@ -137,7 +137,6 @@ def update_zoekterm():
     st.session_state.app_state.current_page = 0
 
 def wis_zoekopdracht():
-    """Callback functie om de zoekopdracht veilig te wissen zonder API error."""
     st.session_state.app_state.zoek_veld = ""
     st.session_state["zoek_input"] = ""
     st.session_state.app_state.current_page = 0
@@ -146,13 +145,11 @@ def render_zoekbalk():
     state = st.session_state.app_state
     c1, c2 = st.columns([7, 2])
     
-    # We koppelen de waarde aan de key in session state
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
                             on_change=update_zoekterm)
     
     if state.zoek_veld:
-        # Gebruik on_click callback om de session state te resetten VOORDAT de run begint
         if c2.button("✖ WISSEN", use_container_width=True, on_click=wis_zoekopdracht):
             st.rerun()
     else:
@@ -268,7 +265,7 @@ def main():
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
 
-    # Berekening geselecteerde ruiten (opgeteld bij kolom 'aantal')
+    # Berekening geselecteerde ruiten
     geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
     totaal_ruiten = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
     sel_suffix = f" ({totaal_ruiten})" if totaal_ruiten > 0 else ""
@@ -281,7 +278,7 @@ def main():
     if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = False; st.rerun()
 
-    # Paginering
+    # Paginering & Tabel
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
@@ -323,22 +320,16 @@ def main():
             f1, f2 = st.columns(2)
             n_loc = f1.selectbox("Locatie", options=LOCATIE_OPTIES)
             n_aantal = f2.number_input("Aantal", min_value=1, value=1)
-            
             f3, f4 = st.columns(2)
             n_breedte = f3.number_input("Breedte (mm)", min_value=0, value=0)
             n_hoogte = f4.number_input("Hoogte (mm)", min_value=0, value=0)
-            
             n_order = st.text_input("Ordernummer", placeholder="Ordernr...")
-            n_omschrijving = st.text_input("Omschrijving", placeholder="Type glas, bijzonderheden...")
+            n_omschrijving = st.text_input("Omschrijving", placeholder="Type glas...")
             
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
                 service.repo.insert_one({
-                    "locatie": n_loc, 
-                    "aantal": n_aantal, 
-                    "breedte": n_breedte,
-                    "hoogte": n_hoogte,
-                    "order_nummer": n_order, 
-                    "omschrijving": n_omschrijving
+                    "locatie": n_loc, "aantal": n_aantal, "breedte": n_breedte,
+                    "hoogte": n_hoogte, "order_nummer": n_order, "omschrijving": n_omschrijving
                 })
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
                 st.rerun()
@@ -349,7 +340,13 @@ def main():
         if uploaded_file and st.button("🚀 IMPORT STARTEN", use_container_width=True):
             try:
                 df_import = pd.read_excel(uploaded_file)
-                service.repo.bulk_update_fields(df_import.to_dict('records'))
+                # REPARATIE: Zet alle kolomnamen om naar kleine letters en vervang spaties door underscores
+                df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
+                # Filter alleen de kolommen die de database verwacht
+                db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
+                final_import = df_import[[c for c in df_import.columns if c in db_cols]]
+                
+                service.repo.bulk_update_fields(final_import.to_dict('records'))
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
         
