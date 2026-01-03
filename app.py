@@ -31,7 +31,7 @@ class AppState:
     show_location_grid: bool = False
     current_page: int = 0
     loc_prefix: str = "B"
-    success_msg: str = ""
+    success_added: bool = False  # Vlag voor succesmelding
 
 # =============================================================================
 # 2. DATABASE REPOSITORY LAAG
@@ -138,7 +138,7 @@ def update_zoekterm():
 
 def wis_zoekopdracht():
     st.session_state.app_state.zoek_veld = ""
-    st.session_state.zoek_input = ""
+    st.session_state["zoek_input"] = ""
     st.session_state.app_state.current_page = 0
 
 def render_zoekbalk():
@@ -236,7 +236,6 @@ def main():
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
 
-    # SYNC EDITS: Geen rerun bij checkbox-verandering om verspringen te voorkomen
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
@@ -244,32 +243,24 @@ def main():
             temp_start = state.current_page * ROWS_PER_PAGE
             display_slice = state.mijn_data.iloc[temp_start : temp_start + ROWS_PER_PAGE]
             db_updates = []
-            
             for row_idx_str, changes in edits.items():
                 real_idx = display_slice.index[int(row_idx_str)]
                 row_id = state.mijn_data.at[real_idx, "id"]
-                
-                # Directe lokale update van de bron-data
                 for col, val in changes.items():
                     state.mijn_data.at[real_idx, col] = val
-                
-                # Alleen DB updates verzamelen als er meer dan alleen de selectie is gewijzigd
                 clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
                 if clean_changes:
                     db_updates.append({"id": int(row_id), **clean_changes})
-            
             if db_updates:
                 service.repo.bulk_update_fields(db_updates)
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-                st.rerun() # Alleen rerun bij database wijziging (Loc/Aantal)
+            st.rerun()
 
-    # Berekening geselecteerde ruiten voor knoppen
     geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
     totaal_ruiten = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
     sel_suffix = f" ({totaal_ruiten})" if totaal_ruiten > 0 else ""
 
     actie_houder = st.container()
-    
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = True; st.rerun()
@@ -281,7 +272,6 @@ def main():
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
     display_df = state.mijn_data.iloc[state.current_page * ROWS_PER_PAGE : (state.current_page + 1) * ROWS_PER_PAGE].copy()
 
-    # De Tabel: Gebruik een stabiele index om scrollpositie te behouden
     st.data_editor(
         display_df, 
         column_config={
@@ -312,10 +302,10 @@ def main():
     with footer_col1:
         st.subheader("➕ Nieuwe ruit toevoegen")
         
-        # MOOIE OPLOSSING VOOR VALIDATIE: Gebruik state om melding te tonen na rerun
-        if state.success_msg:
-            st.success(state.success_msg)
-            state.success_msg = "" # Reset na tonen
+        # Toon succesmelding als de vlag aan staat
+        if state.success_added:
+            st.success("Gelukt! De ruit(en) is/zijn toegevoegd.")
+            state.success_added = False # Reset voor de volgende interactie
 
         with st.form("nieuw_item_form", clear_on_submit=True):
             f1, f2 = st.columns(2)
@@ -336,7 +326,7 @@ def main():
                     "omschrijving": str(n_omschrijving).strip() if n_omschrijving else None
                 })
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-                state.success_msg = "Gelukt! De ruit(en) is/zijn toegevoegd."
+                state.success_added = True # Zet de vlag aan
                 st.rerun()
 
     with footer_col2:
