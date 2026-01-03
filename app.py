@@ -255,7 +255,13 @@ def main():
     display_df.set_index("id", inplace=True, drop=False)
 
     actie_houder = st.container()
-    aantal_geselecteerd = int(state.mijn_data[state.mijn_data["Selecteren"]]["aantal"].sum())
+    
+    # FIX: Veiligere berekening van de som om KeyError te voorkomen
+    if not state.mijn_data.empty and "Selecteren" in state.mijn_data.columns and "aantal" in state.mijn_data.columns:
+        aantal_geselecteerd = int(state.mijn_data.loc[state.mijn_data["Selecteren"] == True, "aantal"].sum())
+    else:
+        aantal_geselecteerd = 0
+        
     tonen_getal = f" ({aantal_geselecteerd})" if aantal_geselecteerd > 0 else ""
 
     col_sel1, col_sel2, _ = st.columns([2, 2, 5])
@@ -284,7 +290,8 @@ def main():
             state.current_page += 1; st.rerun()
     
     with actie_houder: 
-        render_batch_acties(state.mijn_data[state.mijn_data["Selecteren"]], service)
+        # Gebruik de veilige filtermethode hier ook
+        render_batch_acties(state.mijn_data[state.mijn_data["Selecteren"] == True] if "Selecteren" in state.mijn_data.columns else pd.DataFrame(), service)
     
     st.divider()
     if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
