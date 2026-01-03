@@ -58,11 +58,6 @@ class GlasVoorraadRepository:
             result = query.order("id").execute()
             return result.data
     
-    def insert_many(self, records: List[Dict[str, Any]]) -> bool:
-        with self._handle_errors("toevoegen records"):
-            self.client.table(self.table).insert(records).execute()
-            return True
-    
     def bulk_update_location(self, ids: List[int], nieuwe_locatie: str) -> bool:
         with self._handle_errors("locatie update"):
             self.client.table(self.table).update({"locatie": nieuwe_locatie}).in_("id", ids).execute()
@@ -94,26 +89,6 @@ class VoorraadService:
         df["Selecteren"] = False
         kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
         return df[kolommen]
-    
-    def verwerk_inline_edits(self, df: pd.DataFrame, edits: Dict[int, Dict[str, Any]]) -> bool:
-        if not edits: return False
-        batch_updates = []
-        for row_idx, changes in edits.items():
-            clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
-            if clean_changes:
-                row_id = df.iloc[int(row_idx)]["id"]
-                batch_updates.append({"id": int(row_id), **clean_changes})
-        return self.repo.bulk_update_fields(batch_updates) if batch_updates else False
-
-    def valideer_excel_import(self, df: pd.DataFrame) -> tuple[pd.DataFrame, List[str]]:
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        mapping = {"order": "order_nummer", "ordernummer": "order_nummer", "aantal_stuks": "aantal", "qty": "aantal", "glastype": "omschrijving", "type": "omschrijving"}
-        df = df.rename(columns=mapping)
-        for num_col in ["aantal", "breedte", "hoogte"]: 
-            df[num_col] = pd.to_numeric(df[num_col], errors="coerce")
-        df.loc[~df["locatie"].isin(LOCATIE_OPTIES), "locatie"] = "BK"
-        df["uit_voorraad"] = "Nee"
-        return df.dropna(subset=["order_nummer"]).fillna(""), []
 
 # =============================================================================
 # 4. UI HELPER FUNCTIES
@@ -156,12 +131,10 @@ def update_zoekterm():
 
 def render_zoekbalk():
     state = st.session_state.app_state
-    c1, c2 = st.columns([7, 2]) # Uitlijning gelijk aan header
-    
+    c1, c2 = st.columns([7, 2])
     zoekterm = c1.text_input("Zoeken", placeholder="🔍 Zoek op order, maat of type...", 
                             label_visibility="collapsed", key="zoek_input", 
                             value=state.zoek_veld, on_change=update_zoekterm)
-    
     if c2.button("ZOEKEN", use_container_width=True):
         state.zoek_veld = zoekterm
         state.current_page = 0
@@ -203,18 +176,15 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
             st.rerun()
         if act_col2.button("📍 Wijchen", use_container_width=True):
-            state.loc_prefix = "W"
-            st.rerun()
+            state.loc_prefix = "W"; st.rerun()
         if act_col3.button("📍 Boxmeer", use_container_width=True):
-            state.loc_prefix = "B"
-            st.rerun()
+            state.loc_prefix = "B"; st.rerun()
         gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
         cols = st.columns(5)
         for i, loc in enumerate(gefilterde_locaties):
             with cols[i % 5]:
                 if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
-                    state.bulk_loc = loc
-                    st.rerun()
+                    state.bulk_loc = loc; st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
 # =============================================================================
@@ -236,9 +206,7 @@ def main():
             pw_input = st.text_input("Wachtwoord", type="password")
             if st.button("Inloggen", use_container_width=True):
                 if pw_input == WACHTWOORD:
-                    state.ingelogd = True
-                    st.query_params["auth"] = "true"
-                    st.rerun()
+                    state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
                 else: st.error("Wachtwoord onjuist")
         st.stop()
     
@@ -252,23 +220,30 @@ def main():
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
 
-    # Paginering logica (MAX 25)
+    # Sync Edits via unieke ID
+    if "main_editor" in st.session_state:
+        edits = st.session_state.main_editor.get("edited_rows", {})
+        if edits:
+            batch_updates = []
+            for row_id_str, changes in edits.items():
+                row_id = int(row_id_str)
+                for col, val in changes.items():
+                    state.mijn_data.loc[state.mijn_data["id"] == row_id, col] = val
+                db_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
+                if db_changes:
+                    batch_updates.append({"id": row_id, **db_changes})
+            if batch_updates:
+                service.repo.bulk_update_fields(batch_updates)
+
+    # Paginering instellingen (25 rijen)
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
     num_pages = max(1, (total_rows - 1) // ROWS_PER_PAGE + 1)
     if state.current_page >= num_pages: state.current_page = 0
+    
     start_idx = state.current_page * ROWS_PER_PAGE
-    end_idx = start_idx + ROWS_PER_PAGE
-    display_df = state.mijn_data.iloc[start_idx:end_idx].copy()
-
-    # Stabiele Selectie Sync via unieke ID
-    if "main_editor" in st.session_state:
-        edits = st.session_state.main_editor.get("edited_rows", {})
-        for row_idx_str, changes in edits.items():
-            if "Selecteren" in changes:
-                row_idx = int(row_idx_str)
-                row_id = display_df.iloc[row_idx]["id"]
-                state.mijn_data.loc[state.mijn_data["id"] == row_id, "Selecteren"] = changes["Selecteren"]
+    display_df = state.mijn_data.iloc[start_idx : start_idx + ROWS_PER_PAGE].copy()
+    display_df.set_index("id", inplace=True, drop=False)
 
     actie_houder = st.container()
     aantal_geselecteerd = int(state.mijn_data[state.mijn_data["Selecteren"]]["aantal"].sum())
@@ -276,13 +251,11 @@ def main():
 
     col_sel1, col_sel2, _ = st.columns([2, 2, 5])
     if col_sel1.button(f"✅ ALLES SELECTEREN{tonen_getal}", use_container_width=True):
-        state.mijn_data["Selecteren"] = True
-        st.rerun()
+        state.mijn_data["Selecteren"] = True; st.rerun()
     if col_sel2.button(f"⬜ ALLES DESELECTEREN", use_container_width=True):
-        state.mijn_data["Selecteren"] = False
-        st.rerun()
+        state.mijn_data["Selecteren"] = False; st.rerun()
     
-    edited_display_df = st.data_editor(
+    st.data_editor(
         display_df, 
         column_config={
             "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"), 
@@ -290,28 +263,17 @@ def main():
             "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"), 
             "aantal": st.column_config.NumberColumn("Aant.", width="small")
         }, 
-        hide_index=True, 
-        use_container_width=True, 
-        key="main_editor", 
-        height=500, 
-        disabled=["id"]
+        hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"]
     )
 
+    # Paginering weergave: Pagina X van Y
     if num_pages > 1:
         p1, p2, p3 = st.columns([1, 2, 1])
         if p1.button("⬅️ VORIGE", use_container_width=True, disabled=state.current_page == 0):
-            state.current_page -= 1
-            st.rerun()
-        p2.markdown(f"<p style='text-align:center;'>Pagina {state.current_page + 1} van {num_pages} ({total_rows} rijen)</p>", unsafe_allow_html=True)
+            state.current_page -= 1; st.rerun()
+        p2.markdown(f"<p style='text-align:center;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
         if p3.button("VOLGENDE ➡️", use_container_width=True, disabled=state.current_page == num_pages - 1):
-            state.current_page += 1
-            st.rerun()
-    
-    edits = st.session_state.main_editor.get("edited_rows", {})
-    if edits and any(any(k != "Selecteren" for k in change.keys()) for change in edits.values()):
-        if service.verwerk_inline_edits(display_df, edits):
-            state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-            st.rerun()
+            state.current_page += 1; st.rerun()
     
     with actie_houder: 
         render_batch_acties(state.mijn_data[state.mijn_data["Selecteren"]], service)
@@ -319,8 +281,6 @@ def main():
     st.divider()
     if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
         st.cache_data.clear()
-        state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-        st.rerun()
+        state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
 
-if __name__ == "__main__": 
-    main()
+if __name__ == "__main__": main()
