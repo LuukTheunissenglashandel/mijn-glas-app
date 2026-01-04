@@ -32,6 +32,7 @@ class AppState:
     current_page: int = 0
     loc_prefix: str = "B"
     success_msg: str = ""
+    backup_data: Optional[List[Dict[str, Any]]] = None # Voor de undo functie
 
 # =============================================================================
 # 2. DATABASE REPOSITORY LAAG
@@ -77,6 +78,18 @@ class GlasVoorraadRepository:
         with self._handle_errors("verwijderen"):
             self.client.table(self.table).delete().in_("id", ids).execute()
             return True
+
+    def restore_full_backup(self, backup: List[Dict[str, Any]]):
+        with self._handle_errors("backup herstellen"):
+            # Verwijder huidige data
+            current = self.client.table(self.table).select("id").execute()
+            all_ids = [r['id'] for r in current.data]
+            if all_ids:
+                self.client.table(self.table).delete().in_("id", all_ids).execute()
+            # Zet backup terug
+            if backup:
+                clean_backup = [{k: v for k, v in r.items() if k != 'Selecteren'} for r in backup]
+                self.client.table(self.table).insert(clean_backup).execute()
 
 # =============================================================================
 # 3. SERVICE LAAG
@@ -160,6 +173,7 @@ def render_zoekbalk():
 def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService):
     if geselecteerd_df.empty: return
     ids_to_act = geselecteerd_df["id"].tolist()
+    total_ruiten = int(geselecteerd_df["aantal"].sum())
     state = st.session_state.app_state
     
     btn_col1, btn_col2 = st.columns(2)
@@ -167,8 +181,11 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
     if btn_col1.button(btn_text, use_container_width=True):
         state.show_location_grid = not state.show_location_grid
         st.rerun()
+
+    # MEEGENOMEN BUTTON MET AANTAL
+    del_btn_label = f"🗑️ MEEGENOMEN ({total_ruiten})"
     if not state.confirm_delete:
-        if btn_col2.button("🗑️ MEEGENOMEN", use_container_width=True):
+        if btn_col2.button(del_btn_label, use_container_width=True):
             state.confirm_delete = True
             st.rerun()
     else:
@@ -176,6 +193,8 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             st.warning("Zeker?")
             cy, cn = st.columns(2)
             if cy.button("JA", use_container_width=True):
+                # Maak backup voor undo
+                state.backup_data = service.repo.get_data()
                 service.repo.delete_many(ids_to_act)
                 state.confirm_delete = False
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
@@ -187,6 +206,8 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
         st.divider()
         act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
         if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
+            # Maak backup voor undo
+            state.backup_data = service.repo.get_data()
             service.repo.bulk_update_location(ids_to_act, state.bulk_loc)
             state.show_location_grid = False
             state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
@@ -232,21 +253,10 @@ def main():
     render_header(logo_b64)
     zoekterm = render_zoekbalk()
     
-    # DATA LADEN & SELECTIES BEWAREN
     if state.mijn_data.empty or state.last_query != zoekterm:
-        # Sla IDs van geselecteerde rijen op voordat de data ververst
-        geselecteerde_ids = []
-        if not state.mijn_data.empty and "Selecteren" in state.mijn_data.columns:
-            geselecteerde_ids = state.mijn_data[state.mijn_data["Selecteren"] == True]["id"].tolist()
-        
         state.mijn_data = service.laad_voorraad_df(zoekterm)
         state.last_query = zoekterm
-        
-        # Zet de vinkjes terug in de nieuwe dataset
-        if geselecteerde_ids:
-            state.mijn_data.loc[state.mijn_data["id"].isin(geselecteerde_ids), "Selecteren"] = True
 
-    # SYNC EDITS
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
@@ -254,34 +264,25 @@ def main():
             temp_start = state.current_page * ROWS_PER_PAGE
             display_slice = state.mijn_data.iloc[temp_start : temp_start + ROWS_PER_PAGE]
             db_updates = []
-            
             for row_idx_str, changes in edits.items():
                 real_idx = display_slice.index[int(row_idx_str)]
                 row_id = state.mijn_data.at[real_idx, "id"]
-                
                 for col, val in changes.items():
                     state.mijn_data.at[real_idx, col] = val
-                
                 clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
                 if clean_changes:
                     db_updates.append({"id": int(row_id), **clean_changes})
-            
             if db_updates:
+                state.backup_data = service.repo.get_data() # Backup voor sync edits
                 service.repo.bulk_update_fields(db_updates)
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-                # Herstel selecties na DB reload
-                geselecteerde_ids = state.mijn_data[state.mijn_data["Selecteren"] == True]["id"].tolist()
-                if geselecteerde_ids:
-                    state.mijn_data.loc[state.mijn_data["id"].isin(geselecteerde_ids), "Selecteren"] = True
                 st.rerun()
 
-    # Berekening geselecteerde ruiten voor knoppen
     geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
     totaal_ruiten = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
     sel_suffix = f" ({totaal_ruiten})" if totaal_ruiten > 0 else ""
 
     actie_houder = st.container()
-    
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
         state.mijn_data["Selecteren"] = True; st.rerun()
@@ -359,11 +360,22 @@ def main():
                     df_import = df_import.rename(columns={'order': 'order_nummer'})
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
+                state.backup_data = service.repo.get_data() # Backup voor import
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
         st.write("") 
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             st.cache_data.clear(); state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
+
+    # UNDO FUNCTIE HELEMAAL ONDERAAN
+    if state.backup_data:
+        st.divider()
+        if st.button("⏪ TERUGZETTEN NAAR VORIGE VERSIE (UNDO)", use_container_width=True):
+            service.repo.restore_full_backup(state.backup_data)
+            state.backup_data = None
+            state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
+            st.success("Versie hersteld!")
+            st.rerun()
 
 if __name__ == "__main__": main()
