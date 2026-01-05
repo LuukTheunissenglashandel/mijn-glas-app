@@ -175,18 +175,6 @@ def render_header(logo_b64: str):
             st.session_state.clear()
             st.rerun()
 
-def sync_selections():
-    if "main_editor" in st.session_state:
-        edited_rows = st.session_state.main_editor.get("edited_rows", {})
-        df = st.session_state.app_state.mijn_data
-        for idx_str, changes in edited_rows.items():
-            if "Selecteren" in changes:
-                row_id = df.iloc[int(idx_str)]["id"]
-                if changes["Selecteren"]:
-                    st.session_state.app_state.selected_ids.add(row_id)
-                else:
-                    st.session_state.app_state.selected_ids.discard(row_id)
-
 # =============================================================================
 # 5. MAIN
 # =============================================================================
@@ -218,11 +206,14 @@ def main():
 
     # Zoekbalk
     c1, c2 = st.columns([7, 2])
-    zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
-    if zoek_val != state.zoek_veld:
-        state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
-    if c2.button("WISSEN", use_container_width=True) and state.zoek_veld:
-        state.zoek_veld = ""; state.current_page = 0; st.rerun()
+    zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed", key="zoek_input")
+    
+    if state.zoek_veld:
+        if c2.button("✖ WISSEN", use_container_width=True):
+            state.zoek_veld = ""; state.current_page = 0; st.rerun()
+    else:
+        if c2.button("ZOEKEN", use_container_width=True):
+            state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
 
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
@@ -256,7 +247,6 @@ def main():
                 with cols[i % 5]:
                     if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
                         state.bulk_loc = loc; st.rerun()
-        st.divider()
     
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
@@ -275,12 +265,22 @@ def main():
             "breedte": st.column_config.NumberColumn("Breedte", width="small"),
             "hoogte": st.column_config.NumberColumn("Hoogte", width="small")
         },
-        hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"],
-        on_change=sync_selections
+        hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"]
     )
 
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
+        
+        # Sync selecties
+        for idx_str, changes in edits.items():
+            if "Selecteren" in changes:
+                row_id = state.mijn_data.iloc[int(idx_str)]["id"]
+                if changes["Selecteren"]:
+                    state.selected_ids.add(row_id)
+                else:
+                    state.selected_ids.discard(row_id)
+        
+        # Database updates
         db_updates = []
         for idx_str, changes in edits.items():
             clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
