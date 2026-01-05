@@ -31,7 +31,8 @@ class AppState:
     bulk_loc: str = "BK"
     zoek_veld: str = ""
     last_query: str = None
-    confirm_delete: bool = False # Vlag voor de delete-bevestiging
+    confirm_delete: bool = False  
+    confirm_undo: bool = False    
     show_location_grid: bool = False
     current_page: int = 0
     loc_prefix: str = "B"
@@ -134,14 +135,10 @@ class VoorraadService:
         st.cache_data.clear()
 
     def push_undo_state(self, affected_ids: List[int]):
-        """Slaat alleen de betrokken records op voor de huidige sessie."""
         records = self.repo.get_by_ids(affected_ids)
         if not records: return
         nu = datetime.now(AMSTERDAM_TZ).strftime("%H:%M:%S")
-        st.session_state.app_state.undo_stack.append({
-            "data": records,
-            "tijd": nu
-        })
+        st.session_state.app_state.undo_stack.append({"data": records, "tijd": nu})
         if len(st.session_state.app_state.undo_stack) > 10:
             st.session_state.app_state.undo_stack.pop(0)
 
@@ -164,21 +161,39 @@ def render_styling(logo_b64: str):
         <style>
         .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
         #MainMenu, footer, header {{visibility: hidden;}}
-        .header-left {{ display: flex; align-items: center; gap: 15px; height: 100%; }}
-        .header-left img {{ width: 60px; height: auto; }}
-        .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; }}
+        /* Header styling voor betere mobiele uitlijning */
+        .header-container {{ display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 1rem; }}
+        .header-left {{ display: flex; align-items: center; gap: 10px; }}
+        .header-left img {{ width: 50px; height: auto; }}
+        .header-left h1 {{ margin: 0; font-size: 1.5rem !important; font-weight: 700; }}
+        
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
         [data-testid="stVerticalBlock"] {{ gap: 0.4rem !important; }}
+        
+        @media (max-width: 640px) {{
+            .header-left h1 {{ font-size: 1.2rem !important; }}
+            .header-left img {{ width: 40px; }}
+        }}
         </style>
     """, unsafe_allow_html=True)
 
 def render_header(logo_b64: str):
-    h1, h2 = st.columns([7, 2])
-    with h1:
-        st.markdown(f'<div class="header-left"><img src="data:image/webp;base64,{logo_b64}"><h1>Voorraad glas</h1></div>', unsafe_allow_html=True)
+    # Gebruik een HTML container voor stabiele uitlijning op mobiel
+    st.markdown(f"""
+        <div class="header-container">
+            <div class="header-left">
+                <img src="data:image/webp;base64,{logo_b64}">
+                <h1>Voorraad glas</h1>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # De uitlogknop moet in een kolom blijven voor Streamlit interactie
+    _, h2 = st.columns([7, 2])
     with h2:
         if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
+            st.query_params.clear() # Fix voor logout bug
             st.session_state.clear()
             st.rerun()
 
@@ -199,8 +214,6 @@ def sync_selections():
 @st.fragment
 def render_main_interface(service):
     state = st.session_state.app_state
-    
-    # 1. Zoeksectie
     c1, c2 = st.columns([7, 2])
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
     
@@ -214,7 +227,6 @@ def render_main_interface(service):
             state.zoek_veld = ""; state.current_page = 0; st.rerun(scope="fragment")
 
     actie_houder = st.container()
-
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
     curr_ids = set(state.mijn_data['id'].tolist())
@@ -237,25 +249,20 @@ def render_main_interface(service):
             if b1.button("❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN", use_container_width=True):
                 state.show_location_grid = not state.show_location_grid; st.rerun(scope="fragment")
             
-            # --- MEEGENOMEN CONTROLE LOGICA ---
             with b2:
                 if not state.confirm_delete:
                     if st.button(f"🗑️ MEEGENOMEN ({totaal_sel})", use_container_width=True):
-                        state.confirm_delete = True
-                        st.rerun(scope="fragment")
+                        state.confirm_delete = True; st.rerun(scope="fragment")
                 else:
                     st.write("**Weet je het zeker?**")
-                    c_ja, c_nee = st.columns(2)
-                    if c_ja.button("Ja", use_container_width=True, type="primary"):
+                    mj1, mj2 = st.columns(2)
+                    if mj1.button("Ja", use_container_width=True, type="primary"):
                         service.push_undo_state(list(state.selected_ids))
                         service.repo.delete_many(list(state.selected_ids))
-                        state.selected_ids.clear()
-                        state.confirm_delete = False
-                        service.trigger_mutation()
-                        st.rerun(scope="fragment")
-                    if c_nee.button("Annuleer", use_container_width=True):
-                        state.confirm_delete = False
-                        st.rerun(scope="fragment")
+                        state.selected_ids.clear(); state.confirm_delete = False
+                        service.trigger_mutation(); st.rerun(scope="fragment")
+                    if mj2.button("Annuleer", use_container_width=True):
+                        state.confirm_delete = False; st.rerun(scope="fragment")
             
             if state.show_location_grid:
                 st.divider()
@@ -363,19 +370,13 @@ def main():
             try:
                 df_import = pd.read_excel(up)
                 df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
-                if 'order' in df_import.columns: 
-                    df_import = df_import.rename(columns={'order': 'order_nummer'})
-                
+                if 'order' in df_import.columns: df_import = df_import.rename(columns={'order': 'order_nummer'})
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
-                
-                # Undo voor bulk: sla huidige staat op
                 all_ids = [r['id'] for r in service.repo.get_all_for_backup()]
                 service.push_undo_state(all_ids)
-                
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
-                service.trigger_mutation()
-                st.rerun()
+                service.trigger_mutation(); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
         
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
@@ -384,11 +385,19 @@ def main():
         if state.undo_stack:
             st.divider()
             ls = state.undo_stack[-1]
-            st.write(f"Laatste actie om: **{ls['tijd']}**")
-            if st.button(f"⏪ TERUGZETTEN", use_container_width=True):
-                undo_data = state.undo_stack.pop()["data"]
-                clean_undo = [{k:v for k,v in r.items() if k != 'Selecteren'} for r in undo_data]
-                service.repo.bulk_update_fields(clean_undo)
-                service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
+            if not state.confirm_undo:
+                if st.button(f"⏪ TERUGZETTEN (Actie van {ls['tijd']})", use_container_width=True):
+                    state.confirm_undo = True; st.rerun()
+            else:
+                st.write("**Weet je het zeker? (Undo)**")
+                u1, u2 = st.columns(2)
+                if u1.button("Ja", use_container_width=True, type="primary", key="undo_yes"):
+                    undo_data = state.undo_stack.pop()["data"]
+                    clean_undo = [{k:v for k,v in r.items() if k != 'Selecteren'} for r in undo_data]
+                    service.repo.bulk_update_fields(clean_undo)
+                    state.confirm_undo = False
+                    service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
+                if u2.button("Annuleer", use_container_width=True, key="undo_no"):
+                    state.confirm_undo = False; st.rerun()
 
 if __name__ == "__main__": main()
