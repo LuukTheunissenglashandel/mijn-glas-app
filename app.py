@@ -62,18 +62,15 @@ class GlasVoorraadRepository:
             start = page * limit
             end = start + limit - 1
             
-            # Basis query opbouw
             query = self.client.table(self.table).select("*", count="exact")
             if zoekterm:
                 search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
                 query = query.or_(search_filter)
             
             try:
-                # Probeer de gevraagde range op te halen
                 result = query.order("id").range(start, end).execute()
                 return result.data, result.count
             except Exception as e:
-                # Fix voor Error 416: Als de pagina niet bestaat (bijv. na verwijderen), ga naar pagina 1
                 if "416" in str(e) or "Range" in str(e):
                     result = query.order("id").range(0, limit - 1).execute()
                     return result.data, result.count
@@ -186,7 +183,7 @@ def sync_selections():
                     st.session_state.app_state.selected_ids.discard(row_id)
 
 # =============================================================================
-# 5. GEOPTIMALISEERD INTERACTIEF BLOK
+# 5. GEOPTIMALISEERD INTERACTIEF BLOK (FRAGMENT)
 # =============================================================================
 
 @st.fragment
@@ -198,13 +195,16 @@ def render_main_interface(service):
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
     
     if zoek_val != state.zoek_veld:
-        state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
+        state.zoek_veld = zoek_val; state.current_page = 0
+        st.rerun(scope="fragment") # Alleen fragment herladen, voorkomt flash in header
         
     if not state.zoek_veld:
-        if c2.button("ZOEKEN", use_container_width=True, key="search_main"): st.rerun()
+        if c2.button("ZOEKEN", use_container_width=True, key="search_main"): 
+            st.rerun(scope="fragment")
     else:
         if c2.button("WISSEN", use_container_width=True, key="clear_main"):
-            state.zoek_veld = ""; state.current_page = 0; st.rerun()
+            state.zoek_veld = ""; state.current_page = 0
+            st.rerun(scope="fragment")
 
     # 2. Container voor actieknoppen
     actie_houder = st.container()
@@ -232,33 +232,40 @@ def render_main_interface(service):
         with actie_houder:
             b1, b2 = st.columns(2)
             if b1.button("❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN", use_container_width=True):
-                state.show_location_grid = not state.show_location_grid; st.rerun()
+                state.show_location_grid = not state.show_location_grid
+                st.rerun(scope="fragment")
             if b2.button(f"🗑️ MEEGENOMEN ({totaal_sel})", use_container_width=True):
                 service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
-                state.selected_ids.clear(); service.trigger_mutation(); st.rerun()
+                state.selected_ids.clear(); service.trigger_mutation()
+                st.rerun(scope="fragment")
             
             if state.show_location_grid:
                 st.divider()
                 al1, al2, al3 = st.columns([2, 1, 1])
                 if al1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
                     service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
-                    service.trigger_mutation(); state.show_location_grid = False; st.rerun()
-                if al2.button("📍 Wijchen", use_container_width=True): state.loc_prefix = "W"; st.rerun()
-                if al3.button("📍 Boxmeer", use_container_width=True): state.loc_prefix = "B"; st.rerun()
+                    service.trigger_mutation(); state.show_location_grid = False
+                    st.rerun(scope="fragment") # Voorkomt hapering bij verplaatsen
+                if al2.button("📍 Wijchen", use_container_width=True): 
+                    state.loc_prefix = "W"; st.rerun(scope="fragment")
+                if al3.button("📍 Boxmeer", use_container_width=True): 
+                    state.loc_prefix = "B"; st.rerun(scope="fragment")
                 
                 locs = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
                 cols = st.columns(5)
                 for i, loc in enumerate(locs):
                     with cols[i % 5]:
                         if st.button(loc, key=f"lbtn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
-                            state.bulk_loc = loc; st.rerun()
+                            state.bulk_loc = loc; st.rerun(scope="fragment")
 
     # 5. Alles selecteren/deselecteren
     cs1, cs2 = st.columns([1, 1])
     if cs1.button(f"✅ ALLES SELECTEREN{suffix}", use_container_width=True):
-        state.selected_ids.update(service.repo.get_all_matching_ids(state.zoek_veld)); st.rerun()
+        state.selected_ids.update(service.repo.get_all_matching_ids(state.zoek_veld))
+        st.rerun(scope="fragment")
     if cs2.button(f"⬜ ALLES DESELECTEREN{suffix}", use_container_width=True):
-        state.selected_ids.clear(); st.rerun()
+        state.selected_ids.clear()
+        st.rerun(scope="fragment")
 
     # 6. De Tabel
     st.data_editor(
@@ -273,7 +280,6 @@ def render_main_interface(service):
         on_change=sync_selections
     )
 
-    # Database updates verwerken
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         db_up = []
@@ -282,17 +288,17 @@ def render_main_interface(service):
             if clean: db_up.append({"id": int(state.mijn_data.iloc[int(idx)]["id"]), **clean})
         if db_up:
             service.push_undo_state(); service.repo.bulk_update_fields(db_up)
-            service.trigger_mutation(); st.rerun()
+            service.trigger_mutation(); st.rerun(scope="fragment")
 
     # 7. Paginering
     num_p = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_p > 1:
         p1, p2, p3 = st.columns([1, 2, 1], vertical_alignment="center")
         if p1.button("⬅️ VORIGE", disabled=state.current_page == 0, use_container_width=True):
-            state.current_page -= 1; st.rerun()
+            state.current_page -= 1; st.rerun(scope="fragment")
         p2.markdown(f"<p style='text-align:center; margin:0;'>Pagina {state.current_page + 1} van {num_p}</p>", unsafe_allow_html=True)
         if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_p - 1, use_container_width=True):
-            state.current_page += 1; st.rerun()
+            state.current_page += 1; st.rerun(scope="fragment")
 
 # =============================================================================
 # 6. APP EXECUTION
@@ -323,6 +329,8 @@ def main():
     
     service = VoorraadService(GlasVoorraadRepository(init_supabase()))
     render_header(logo_b64)
+    
+    # De interface aanroepen - fragment zorgt voor rustige header
     render_main_interface(service)
 
     st.divider()
