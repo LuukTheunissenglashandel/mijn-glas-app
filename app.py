@@ -3,6 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 import base64
 import os
+from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field
 from contextlib import contextmanager
@@ -34,7 +35,10 @@ class AppState:
     loc_prefix: str = "B"
     success_msg: str = ""
     selected_ids: set = field(default_factory=set)
-    undo_stack: List[List[Dict[str, Any]]] = field(default_factory=list) 
+    # Verbetering: Undo stack met metadata
+    undo_stack: List[Dict[str, Any]] = field(default_factory=list) 
+    # Verbetering: Lokale map voor snelle som-berekening zonder DB query
+    id_to_aantal_map: Dict[int, int] = field(default_factory=dict)
     total_count: int = 0
 
 # =============================================================================
@@ -65,18 +69,14 @@ class GlasVoorraadRepository:
             result = query.order("id").range(start, end).execute()
             return result.data, result.count
 
-    def get_all_matching_ids(self, zoekterm: str = "") -> List[int]:
-        query = self.client.table(self.table).select("id")
+    def get_all_matching_data(self, zoekterm: str = "") -> List[Dict[str, Any]]:
+        """Haalt IDs en aantallen op voor globale selectie."""
+        query = self.client.table(self.table).select("id, aantal")
         if zoekterm:
             search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
             query = query.or_(search_filter)
         result = query.execute()
-        return [r['id'] for r in result.data]
-
-    def get_sum_aantal_for_ids(self, ids: List[int]) -> int:
-        if not ids: return 0
-        result = self.client.table(self.table).select("aantal").in_("id", ids).execute()
-        return sum(int(r['aantal'] or 0) for r in result.data)
+        return result.data
 
     def get_all_for_backup(self) -> List[Dict[str, Any]]:
         res = self.client.table(self.table).select("*").execute()
@@ -123,7 +123,13 @@ class VoorraadService:
         
         data, count = _cached_fetch(zoekterm, page)
         kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
+        
         if not data: return pd.DataFrame(columns=kolommen), 0
+        
+        # Update lokale map voor razendsnelle berekening van de som
+        for r in data:
+            st.session_state.app_state.id_to_aantal_map[r['id']] = int(r['aantal'] or 0)
+            
         df = pd.DataFrame(data)
         df["Selecteren"] = df["id"].apply(lambda x: x in st.session_state.app_state.selected_ids)
         for col in kolommen:
@@ -135,7 +141,11 @@ class VoorraadService:
 
     def push_undo_state(self):
         full_data = self.repo.get_all_for_backup()
-        st.session_state.app_state.undo_stack.append(full_data)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        st.session_state.app_state.undo_stack.append({
+            "time": timestamp,
+            "data": full_data
+        })
         if len(st.session_state.app_state.undo_stack) > 10:
             st.session_state.app_state.undo_stack.pop(0)
 
@@ -172,6 +182,7 @@ def render_header(logo_b64: str):
             st.rerun()
 
 def sync_selections():
+    """Update selecties in geheugen. Geen database calls hier voor snelheid."""
     if "main_editor" in st.session_state:
         edited_rows = st.session_state.main_editor.get("edited_rows", {})
         df = st.session_state.app_state.mijn_data
@@ -222,15 +233,19 @@ def main():
 
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
-    totaal_ruiten_geselecteerd = service.repo.get_sum_aantal_for_ids(list(state.selected_ids))
+    # Razendsnelle som berekening uit lokaal geheugen voorkomt hapering
+    totaal_ruiten_geselecteerd = sum(state.id_to_aantal_map.get(rid, 0) for rid in state.selected_ids)
     sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
     actie_houder = st.container()
     
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
-        all_ids = service.repo.get_all_matching_ids(state.zoek_veld)
-        state.selected_ids.update(all_ids); st.rerun()
+        all_matches = service.repo.get_all_matching_data(state.zoek_veld)
+        for r in all_matches:
+            state.selected_ids.add(r['id'])
+            state.id_to_aantal_map[r['id']] = int(r['aantal'] or 0)
+        st.rerun()
     if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True):
         state.selected_ids.clear(); st.rerun()
 
@@ -336,8 +351,9 @@ def main():
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             service.trigger_mutation(); st.rerun()
         if state.undo_stack:
-            if st.button(f"⏪ TERUGZETTEN NAAR VORIGE VERSIE (UNDO - Stack: {len(state.undo_stack)})", use_container_width=True):
-                last_state = state.undo_stack.pop(); service.repo.restore_backup(last_state)
+            last_change = state.undo_stack[-1]
+            if st.button(f"⏪ TERUGZETTEN (Laatste aanpassing: {last_change['time']})", use_container_width=True):
+                item = state.undo_stack.pop(); service.repo.restore_backup(item['data'])
                 service.trigger_mutation(); st.success("Versie hersteld!"); st.rerun()
 
 if __name__ == "__main__": main()
