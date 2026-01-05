@@ -3,8 +3,8 @@ import pandas as pd
 from supabase import create_client, Client
 import base64
 import os
-from datetime import datetime
 import pytz
+from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field
 from contextlib import contextmanager
@@ -137,8 +137,9 @@ class VoorraadService:
 
     def push_undo_state(self):
         full_data = self.repo.get_all_for_backup()
-        ams_tz = pytz.timezone('Europe/Amsterdam')
-        nu = datetime.now(ams_tz).strftime("%d-%m-%Y %H:%M:%S")
+        # Gebruik pytz voor Europa/Amsterdam tijdzone
+        tz = pytz.timezone('Europe/Amsterdam')
+        nu = datetime.now(tz).strftime("%d-%m-%Y %H:%M:%S")
         st.session_state.app_state.undo_stack.append({"data": full_data, "tijd": nu})
         if len(st.session_state.app_state.undo_stack) > 10:
             st.session_state.app_state.undo_stack.pop(0)
@@ -175,6 +176,18 @@ def render_header(logo_b64: str):
             st.session_state.clear()
             st.rerun()
 
+def sync_selections():
+    if "main_editor" in st.session_state:
+        edited_rows = st.session_state.main_editor.get("edited_rows", {})
+        df = st.session_state.app_state.mijn_data
+        for idx_str, changes in edited_rows.items():
+            if "Selecteren" in changes:
+                row_id = df.iloc[int(idx_str)]["id"]
+                if changes["Selecteren"]:
+                    st.session_state.app_state.selected_ids.add(row_id)
+                else:
+                    st.session_state.app_state.selected_ids.discard(row_id)
+
 # =============================================================================
 # 5. MAIN
 # =============================================================================
@@ -206,60 +219,18 @@ def main():
 
     # Zoekbalk
     c1, c2 = st.columns([7, 2])
-    zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed", key="zoek_input")
-    
-    if state.zoek_veld:
-        if c2.button("✖ WISSEN", use_container_width=True):
-            state.zoek_veld = ""; state.current_page = 0; st.rerun()
-    else:
-        if c2.button("ZOEKEN", use_container_width=True):
-            state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
-
-    # EERST selecties syncen uit vorige editor state
-    if "main_editor" in st.session_state:
-        edits = st.session_state.main_editor.get("edited_rows", {})
-        for idx_str, changes in edits.items():
-            if "Selecteren" in changes:
-                # Gebruik oude data om ID op te halen
-                if not state.mijn_data.empty and int(idx_str) < len(state.mijn_data):
-                    row_id = state.mijn_data.iloc[int(idx_str)]["id"]
-                    if changes["Selecteren"]:
-                        state.selected_ids.add(row_id)
-                    else:
-                        state.selected_ids.discard(row_id)
+    zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
+    if zoek_val != state.zoek_veld:
+        state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
+    if c2.button("WISSEN", use_container_width=True) and state.zoek_veld:
+        state.zoek_veld = ""; state.current_page = 0; st.rerun()
 
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
     totaal_ruiten_geselecteerd = service.repo.get_sum_aantal_for_ids(list(state.selected_ids))
     sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
-    # Batch acties BOVEN de tabel (zonder container trick)
-    if state.selected_ids:
-        b1, b2 = st.columns(2)
-        btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
-        if b1.button(btn_text, use_container_width=True):
-            state.show_location_grid = not state.show_location_grid; st.rerun()
-        if b2.button(f"🗑️ MEEGENOMEN ({totaal_ruiten_geselecteerd})", use_container_width=True):
-            service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
-            state.selected_ids.clear(); service.trigger_mutation(); st.rerun()
-        
-        if state.show_location_grid:
-            st.divider()
-            act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
-            if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
-                service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
-                service.trigger_mutation(); state.show_location_grid = False; st.rerun()
-            if act_col2.button("📍 Wijchen", use_container_width=True):
-                state.loc_prefix = "W"; st.rerun()
-            if act_col3.button("📍 Boxmeer", use_container_width=True):
-                state.loc_prefix = "B"; st.rerun()
-            
-            gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
-            cols = st.columns(5)
-            for i, loc in enumerate(gefilterde_locaties):
-                with cols[i % 5]:
-                    if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
-                        state.bulk_loc = loc; st.rerun()
+    actie_houder = st.container()
     
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
@@ -278,10 +249,10 @@ def main():
             "breedte": st.column_config.NumberColumn("Breedte", width="small"),
             "hoogte": st.column_config.NumberColumn("Hoogte", width="small")
         },
-        hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"]
+        hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"],
+        on_change=sync_selections
     )
 
-    # Alleen database updates verwerken (selecties zijn al gesyncet)
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         db_updates = []
@@ -301,6 +272,34 @@ def main():
         p2.markdown(f"<p style='text-align:center; margin:0;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
         if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True):
             state.current_page += 1; st.rerun()
+
+    if state.selected_ids:
+        with actie_houder:
+            b1, b2 = st.columns(2)
+            btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
+            if b1.button(btn_text, use_container_width=True):
+                state.show_location_grid = not state.show_location_grid; st.rerun()
+            if b2.button(f"🗑️ MEEGENOMEN ({totaal_ruiten_geselecteerd})", use_container_width=True):
+                service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
+                state.selected_ids.clear(); service.trigger_mutation(); st.rerun()
+            
+            if state.show_location_grid:
+                st.divider()
+                act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
+                if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
+                    service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
+                    service.trigger_mutation(); state.show_location_grid = False; st.rerun()
+                if act_col2.button("📍 Wijchen", use_container_width=True):
+                    state.loc_prefix = "W"; st.rerun()
+                if act_col3.button("📍 Boxmeer", use_container_width=True):
+                    state.loc_prefix = "B"; st.rerun()
+                
+                gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
+                cols = st.columns(5)
+                for i, loc in enumerate(gefilterde_locaties):
+                    with cols[i % 5]:
+                        if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
+                            state.bulk_loc = loc; st.rerun()
 
     st.divider()
     footer_col1, footer_col2 = st.columns([1, 1])
