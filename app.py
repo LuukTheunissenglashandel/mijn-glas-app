@@ -66,7 +66,6 @@ class GlasVoorraadRepository:
             return result.data, result.count
 
     def get_all_matching_ids(self, zoekterm: str = "") -> List[int]:
-        """Haalt enkel de IDs op van alle matches voor 'Alles Selecteren'."""
         query = self.client.table(self.table).select("id")
         if zoekterm:
             search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
@@ -75,7 +74,6 @@ class GlasVoorraadRepository:
         return [r['id'] for r in result.data]
 
     def get_sum_aantal_for_ids(self, ids: List[int]) -> int:
-        """Berekent de som van 'aantal' voor een lijst IDs."""
         if not ids: return 0
         result = self.client.table(self.table).select("aantal").in_("id", ids).execute()
         return sum(int(r['aantal'] or 0) for r in result.data)
@@ -224,23 +222,18 @@ def main():
 
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
-    # Bereken som van ruiten voor buttons (zoals het was)
     totaal_ruiten_geselecteerd = service.repo.get_sum_aantal_for_ids(list(state.selected_ids))
     sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
     actie_houder = st.container()
     
-    # Selectie knoppen (Verbeterd: Werkt op alle producten)
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
         all_ids = service.repo.get_all_matching_ids(state.zoek_veld)
-        state.selected_ids.update(all_ids)
-        st.rerun()
+        state.selected_ids.update(all_ids); st.rerun()
     if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True):
-        state.selected_ids.clear()
-        st.rerun()
+        state.selected_ids.clear(); st.rerun()
 
-    # Tabel
     st.data_editor(
         state.mijn_data,
         column_config={
@@ -248,12 +241,13 @@ def main():
             "id": None,
             "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
             "aantal": st.column_config.NumberColumn("Aant.", width="small"),
+            "breedte": st.column_config.NumberColumn("Breedte", width="small"),
+            "hoogte": st.column_config.NumberColumn("Hoogte", width="small")
         },
         hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"],
         on_change=sync_selections
     )
 
-    # Bewerkingen opslaan
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         db_updates = []
@@ -265,7 +259,6 @@ def main():
         if db_updates:
             service.push_undo_state(); service.repo.bulk_update_fields(db_updates); service.trigger_mutation(); st.rerun()
 
-    # Paginering (Zonder record-count tekst)
     num_pages = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_pages > 1:
         p1, p2, p3 = st.columns([1, 2, 1])
@@ -275,40 +268,76 @@ def main():
         if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1):
             state.current_page += 1; st.rerun()
 
-    # Batch acties (Zonder blauwe info balk)
     if state.selected_ids:
         with actie_houder:
             b1, b2 = st.columns(2)
-            if b1.button("📍 LOCATIE WIJZIGEN", use_container_width=True):
+            btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
+            if b1.button(btn_text, use_container_width=True):
                 state.show_location_grid = not state.show_location_grid; st.rerun()
             if b2.button(f"🗑️ MEEGENOMEN ({totaal_ruiten_geselecteerd})", use_container_width=True):
                 service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
                 state.selected_ids.clear(); service.trigger_mutation(); st.rerun()
+            
             if state.show_location_grid:
-                loc = st.selectbox("Nieuwe locatie", LOCATIE_OPTIES, index=LOCATIE_OPTIES.index(state.bulk_loc))
-                if st.button(f"Bevestig verplaatsing naar {loc}", type="primary"):
-                    service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), loc)
+                st.divider()
+                act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
+                if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
+                    service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
                     service.trigger_mutation(); state.show_location_grid = False; st.rerun()
+                if act_col2.button("📍 Wijchen", use_container_width=True):
+                    state.loc_prefix = "W"; st.rerun()
+                if act_col3.button("📍 Boxmeer", use_container_width=True):
+                    state.loc_prefix = "B"; st.rerun()
+                
+                gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
+                cols = st.columns(5)
+                for i, loc in enumerate(gefilterde_locaties):
+                    with cols[i % 5]:
+                        if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
+                            state.bulk_loc = loc; st.rerun()
 
-    # Footer
     st.divider()
-    f1, f2 = st.columns(2)
-    with f1:
-        with st.form("add_form", clear_on_submit=True):
-            st.subheader("➕ Toevoegen")
-            n_order = st.text_input("Ordernummer")
-            n_loc = st.selectbox("Locatie", LOCATIE_OPTIES)
-            n_aantal = st.number_input("Aantal", min_value=1, value=1)
+    footer_col1, footer_col2 = st.columns([1, 1])
+    with footer_col1:
+        st.subheader("➕ Nieuwe ruit toevoegen")
+        if state.success_msg: st.success(state.success_msg); state.success_msg = ""
+        with st.form("nieuw_item_form", clear_on_submit=True):
+            f1, f2 = st.columns(2)
+            n_loc = f1.selectbox("Locatie", options=LOCATIE_OPTIES)
+            n_aantal = f2.number_input("Aantal", min_value=1, value=1)
+            f3, f4 = st.columns(2)
+            n_breedte = f3.number_input("Breedte (mm)", min_value=0, value=0)
+            n_hoogte = f4.number_input("Hoogte (mm)", min_value=0, value=0)
+            n_order = st.text_input("Ordernummer", placeholder="Letters en cijfers toegestaan...")
+            n_omschrijving = st.text_input("Omschrijving", placeholder="Type glas...")
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
-                service.push_undo_state(); service.repo.insert_one({"order_nummer": n_order, "locatie": n_loc, "aantal": n_aantal})
+                service.push_undo_state()
+                service.repo.insert_one({
+                    "locatie": n_loc, "aantal": n_aantal, "breedte": n_breedte if n_breedte > 0 else None,
+                    "hoogte": n_hoogte if n_hoogte > 0 else None, "order_nummer": str(n_order).strip() if n_order else None,
+                    "omschrijving": str(n_omschrijving).strip() if n_omschrijving else None
+                })
+                service.trigger_mutation(); state.success_msg = "Gelukt!"; st.rerun()
+
+    with footer_col2:
+        st.subheader("📥 Bulk & Systeem")
+        uploaded_file = st.file_uploader("Bulk import Excel (.xlsx)", type=["xlsx"], label_visibility="collapsed")
+        if uploaded_file and st.button("🚀 IMPORT STARTEN", use_container_width=True):
+            try:
+                df_import = pd.read_excel(uploaded_file)
+                df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
+                if 'order' in df_import.columns: df_import = df_import.rename(columns={'order': 'order_nummer'})
+                db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
+                final_import = df_import[[c for c in df_import.columns if c in db_cols]]
+                service.push_undo_state(); service.repo.bulk_update_fields(final_import.to_dict('records'))
                 service.trigger_mutation(); st.rerun()
-    with f2:
-        st.subheader("📥 Bulk")
-        if st.button("🔄 DATA VERVERSEN", use_container_width=True):
+            except Exception as e: st.error(f"Fout: {e}")
+        
+        if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             service.trigger_mutation(); st.rerun()
         if state.undo_stack:
-            if st.button(f"⏪ UNDO (Stack: {len(state.undo_stack)})", use_container_width=True):
+            if st.button(f"⏪ TERUGZETTEN NAAR VORIGE VERSIE (UNDO - Stack: {len(state.undo_stack)})", use_container_width=True):
                 last_state = state.undo_stack.pop(); service.repo.restore_backup(last_state)
-                service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
+                service.trigger_mutation(); st.success("Versie hersteld!"); st.rerun()
 
 if __name__ == "__main__": main()
