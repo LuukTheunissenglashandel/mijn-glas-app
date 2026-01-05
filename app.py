@@ -61,12 +61,23 @@ class GlasVoorraadRepository:
         with self._handle_errors("ophalen data"):
             start = page * limit
             end = start + limit - 1
+            
+            # Basis query opbouw
             query = self.client.table(self.table).select("*", count="exact")
             if zoekterm:
                 search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
                 query = query.or_(search_filter)
-            result = query.order("id").range(start, end).execute()
-            return result.data, result.count
+            
+            try:
+                # Probeer de gevraagde range op te halen
+                result = query.order("id").range(start, end).execute()
+                return result.data, result.count
+            except Exception as e:
+                # Fix voor Error 416: Als de pagina niet bestaat (bijv. na verwijderen), ga naar pagina 1
+                if "416" in str(e) or "Range" in str(e):
+                    result = query.order("id").range(0, limit - 1).execute()
+                    return result.data, result.count
+                raise e
 
     def get_all_matching_ids(self, zoekterm: str = "") -> List[int]:
         query = self.client.table(self.table).select("id")
@@ -149,7 +160,6 @@ def render_styling(logo_b64: str):
         .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; }}
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
-        /* Verklein witruimte tussen blokken */
         [data-testid="stVerticalBlock"] {{ gap: 0.4rem !important; }}
         </style>
     """, unsafe_allow_html=True)
@@ -196,10 +206,10 @@ def render_main_interface(service):
         if c2.button("WISSEN", use_container_width=True, key="clear_main"):
             state.zoek_veld = ""; state.current_page = 0; st.rerun()
 
-    # 2. Container voor actieknoppen (Locatie/Meegenomen) - vlak onder de zoekbalk
+    # 2. Container voor actieknoppen
     actie_houder = st.container()
 
-    # 3. Data laden & Som berekenen
+    # 3. Data laden
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
     # Som-berekening voor knoppen
@@ -217,7 +227,7 @@ def render_main_interface(service):
     totaal_sel = sum_on + sum_off
     suffix = f" ({totaal_sel})" if totaal_sel > 0 else ""
 
-    # 4. Actieknoppen Meegenomen / Locatie Wijzigen (indien geselecteerd)
+    # 4. Actieknoppen Meegenomen / Locatie Wijzigen
     if state.selected_ids:
         with actie_houder:
             b1, b2 = st.columns(2)
