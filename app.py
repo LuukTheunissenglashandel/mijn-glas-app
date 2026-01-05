@@ -161,39 +161,55 @@ def render_styling(logo_b64: str):
         <style>
         .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
         #MainMenu, footer, header {{visibility: hidden;}}
-        /* Header styling voor betere mobiele uitlijning */
-        .header-container {{ display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 1rem; }}
-        .header-left {{ display: flex; align-items: center; gap: 10px; }}
-        .header-left img {{ width: 50px; height: auto; }}
-        .header-left h1 {{ margin: 0; font-size: 1.5rem !important; font-weight: 700; }}
+        
+        /* Verbeterde header uitlijning */
+        .custom-header {{ 
+            display: flex; 
+            align-items: center; 
+            justify-content: flex-start; 
+            gap: 15px; 
+            width: 100%;
+            padding: 5px 0;
+        }}
+        .custom-header img {{ 
+            height: 50px; 
+            width: auto; 
+            display: block;
+        }}
+        .custom-header h1 {{ 
+            margin: 0 !important; 
+            padding: 0 !important;
+            font-size: 1.8rem !important; 
+            font-weight: 700;
+            line-height: 50px; /* Gelijk aan logo hoogte voor perfecte centrering */
+        }}
         
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
         [data-testid="stVerticalBlock"] {{ gap: 0.4rem !important; }}
         
         @media (max-width: 640px) {{
-            .header-left h1 {{ font-size: 1.2rem !important; }}
-            .header-left img {{ width: 40px; }}
+            .custom-header h1 {{ font-size: 1.3rem !important; }}
+            .custom-header img {{ height: 40px; }}
+            .custom-header h1 {{ line-height: 40px; }}
         }}
         </style>
     """, unsafe_allow_html=True)
 
 def render_header(logo_b64: str):
-    # Gebruik een HTML container voor stabiele uitlijning op mobiel
+    # Header container voor logo en titel
     st.markdown(f"""
-        <div class="header-container">
-            <div class="header-left">
-                <img src="data:image/webp;base64,{logo_b64}">
-                <h1>Voorraad glas</h1>
-            </div>
+        <div class="custom-header">
+            <img src="data:image/webp;base64,{logo_b64}">
+            <h1>Voorraad glas</h1>
         </div>
     """, unsafe_allow_html=True)
     
-    # De uitlogknop moet in een kolom blijven voor Streamlit interactie
+    # Logout knop in een aparte kolom rij voor interactie
     _, h2 = st.columns([7, 2])
     with h2:
         if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
-            st.query_params.clear() # Fix voor logout bug
+            st.query_params.clear()
             st.session_state.clear()
             st.rerun()
 
@@ -385,8 +401,9 @@ def main():
         if state.undo_stack:
             st.divider()
             ls = state.undo_stack[-1]
+            st.write(f"Laatste actie om: **{ls['tijd']}**")
             if not state.confirm_undo:
-                if st.button(f"⏪ TERUGZETTEN (Actie van {ls['tijd']})", use_container_width=True):
+                if st.button(f"⏪ TERUGZETTEN", use_container_width=True):
                     state.confirm_undo = True; st.rerun()
             else:
                 st.write("**Weet je het zeker? (Undo)**")
