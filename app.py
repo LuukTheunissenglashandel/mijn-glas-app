@@ -3,11 +3,11 @@ import pandas as pd
 from supabase import create_client, Client
 import base64
 import os
+from datetime import datetime
+import pytz
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field
 from contextlib import contextmanager
-from datetime import datetime
-import pytz
 
 # =============================================================================
 # 1. CONFIGURATIE & DATA CLASSES
@@ -36,7 +36,7 @@ class AppState:
     loc_prefix: str = "B"
     success_msg: str = ""
     selected_ids: set = field(default_factory=set)
-    undo_stack: List[List[Dict[str, Any]]] = field(default_factory=list) 
+    undo_stack: List[Dict[str, Any]] = field(default_factory=list) 
     total_count: int = 0
 
 # =============================================================================
@@ -137,7 +137,10 @@ class VoorraadService:
 
     def push_undo_state(self):
         full_data = self.repo.get_all_for_backup()
-        st.session_state.app_state.undo_stack.append(full_data)
+        # Tijdzone naar Amsterdam gezet met Pytz
+        amsterdam_tz = pytz.timezone("Europe/Amsterdam")
+        nu = datetime.now(amsterdam_tz).strftime("%d-%m-%Y %H:%M:%S")
+        st.session_state.app_state.undo_stack.append({"data": full_data, "tijd": nu})
         if len(st.session_state.app_state.undo_stack) > 10:
             st.session_state.app_state.undo_stack.pop(0)
 
@@ -263,11 +266,12 @@ def main():
 
     num_pages = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_pages > 1:
-        p1, p2, p3 = st.columns([1, 2, 1])
-        if p1.button("⬅️ VORIGE", disabled=state.current_page == 0):
+        # Paginering buttons met verticale uitlijning verbeterd
+        p1, p2, p3 = st.columns([1, 2, 1], vertical_alignment="center")
+        if p1.button("⬅️ VORIGE", disabled=state.current_page == 0, use_container_width=True):
             state.current_page -= 1; st.rerun()
-        p2.markdown(f"<p style='text-align:center;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
-        if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1):
+        p2.markdown(f"<p style='text-align:center; margin:0;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
+        if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True):
             state.current_page += 1; st.rerun()
 
     if state.selected_ids:
@@ -338,10 +342,9 @@ def main():
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             service.trigger_mutation(); st.rerun()
         if state.undo_stack:
-            tz_ams = pytz.timezone('Europe/Amsterdam')
-            nu_ams = datetime.now(tz_ams).strftime("%d-%m-%Y %H:%M:%S")
-            if st.button(f"⏪ TERUGZETTEN NAAR VORIGE VERSIE ({nu_ams})", use_container_width=True):
-                last_state = state.undo_stack.pop(); service.repo.restore_backup(last_state)
+            laatste = state.undo_stack[-1]
+            if st.button(f"⏪ TERUGZETTEN (Laatste aanpassing: {laatste['tijd']})", use_container_width=True):
+                state_to_restore = state.undo_stack.pop(); service.repo.restore_backup(state_to_restore['data'])
                 service.trigger_mutation(); st.success("Versie hersteld!"); st.rerun()
 
 if __name__ == "__main__": main()
