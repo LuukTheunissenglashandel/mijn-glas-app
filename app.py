@@ -4,6 +4,7 @@ from supabase import create_client, Client
 import base64
 import os
 from datetime import datetime
+import pytz
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field
 from contextlib import contextmanager
@@ -136,7 +137,8 @@ class VoorraadService:
 
     def push_undo_state(self):
         full_data = self.repo.get_all_for_backup()
-        nu = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        ams_tz = pytz.timezone('Europe/Amsterdam')
+        nu = datetime.now(ams_tz).strftime("%d-%m-%Y %H:%M:%S")
         st.session_state.app_state.undo_stack.append({"data": full_data, "tijd": nu})
         if len(st.session_state.app_state.undo_stack) > 10:
             st.session_state.app_state.undo_stack.pop(0)
@@ -227,7 +229,34 @@ def main():
     totaal_ruiten_geselecteerd = service.repo.get_sum_aantal_for_ids(list(state.selected_ids))
     sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
-    actie_houder = st.container()
+    # Batch acties BOVEN de tabel (zonder container trick)
+    if state.selected_ids:
+        b1, b2 = st.columns(2)
+        btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
+        if b1.button(btn_text, use_container_width=True):
+            state.show_location_grid = not state.show_location_grid; st.rerun()
+        if b2.button(f"🗑️ MEEGENOMEN ({totaal_ruiten_geselecteerd})", use_container_width=True):
+            service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
+            state.selected_ids.clear(); service.trigger_mutation(); st.rerun()
+        
+        if state.show_location_grid:
+            st.divider()
+            act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
+            if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
+                service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
+                service.trigger_mutation(); state.show_location_grid = False; st.rerun()
+            if act_col2.button("📍 Wijchen", use_container_width=True):
+                state.loc_prefix = "W"; st.rerun()
+            if act_col3.button("📍 Boxmeer", use_container_width=True):
+                state.loc_prefix = "B"; st.rerun()
+            
+            gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
+            cols = st.columns(5)
+            for i, loc in enumerate(gefilterde_locaties):
+                with cols[i % 5]:
+                    if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
+                        state.bulk_loc = loc; st.rerun()
+        st.divider()
     
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
@@ -263,41 +292,12 @@ def main():
 
     num_pages = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_pages > 1:
-        # Paginering buttons met verticale uitlijning verbeterd
         p1, p2, p3 = st.columns([1, 2, 1], vertical_alignment="center")
         if p1.button("⬅️ VORIGE", disabled=state.current_page == 0, use_container_width=True):
             state.current_page -= 1; st.rerun()
         p2.markdown(f"<p style='text-align:center; margin:0;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
         if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True):
             state.current_page += 1; st.rerun()
-
-    if state.selected_ids:
-        with actie_houder:
-            b1, b2 = st.columns(2)
-            btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
-            if b1.button(btn_text, use_container_width=True):
-                state.show_location_grid = not state.show_location_grid; st.rerun()
-            if b2.button(f"🗑️ MEEGENOMEN ({totaal_ruiten_geselecteerd})", use_container_width=True):
-                service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
-                state.selected_ids.clear(); service.trigger_mutation(); st.rerun()
-            
-            if state.show_location_grid:
-                st.divider()
-                act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
-                if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
-                    service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
-                    service.trigger_mutation(); state.show_location_grid = False; st.rerun()
-                if act_col2.button("📍 Wijchen", use_container_width=True):
-                    state.loc_prefix = "W"; st.rerun()
-                if act_col3.button("📍 Boxmeer", use_container_width=True):
-                    state.loc_prefix = "B"; st.rerun()
-                
-                gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
-                cols = st.columns(5)
-                for i, loc in enumerate(gefilterde_locaties):
-                    with cols[i % 5]:
-                        if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
-                            state.bulk_loc = loc; st.rerun()
 
     st.divider()
     footer_col1, footer_col2 = st.columns([1, 1])
