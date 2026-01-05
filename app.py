@@ -3,6 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 import base64
 import os
+import datetime
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from contextlib import contextmanager
@@ -32,7 +33,7 @@ class AppState:
     current_page: int = 0
     loc_prefix: str = "B"
     success_msg: str = ""
-    backup_data: Optional[List[Dict[str, Any]]] = None
+    last_update_time: str = "Nog geen wijzigingen"
 
 # =============================================================================
 # 2. DATABASE REPOSITORY LAAG
@@ -42,6 +43,8 @@ class GlasVoorraadRepository:
     def __init__(self, supabase_client: Client):
         self.client = supabase_client
         self.table = "glas_voorraad"
+        self.backup_table = "glas_voorraad_backup"
+        self.meta_table = "app_metadata"
     
     @contextmanager
     def _handle_errors(self, operation: str):
@@ -50,6 +53,41 @@ class GlasVoorraadRepository:
         except Exception as e:
             st.error(f"Database fout bij {operation}: {e}")
             raise
+
+    def set_last_update(self):
+        now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        with self._handle_errors("tijd bijwerken"):
+            self.client.table(self.meta_table).upsert({"key": "last_update", "value": now}).execute()
+
+    def get_last_update(self) -> str:
+        res = self.client.table(self.meta_table).select("value").eq("key", "last_update").execute()
+        return res.data[0]['value'] if res.data else "Onbekend"
+
+    def create_persistent_backup(self):
+        with self._handle_errors("backup maken"):
+            current_data = self.get_data()
+            if current_data:
+                self.client.table(self.backup_table).delete().neq("id", -1).execute()
+                clean_backup = [{k: v for k, v in r.items() if k != 'Selecteren'} for r in current_data]
+                self.client.table(self.backup_table).insert(clean_backup).execute()
+                self.set_last_update()
+
+    def get_persistent_backup(self) -> List[Dict[str, Any]]:
+        res = self.client.table(self.backup_table).select("*").execute()
+        return res.data
+
+    def restore_full_backup(self):
+        with self._handle_errors("backup herstellen"):
+            backup = self.get_persistent_backup()
+            if not backup:
+                st.warning("Geen herstelpunt gevonden in de database.")
+                return
+            current = self.client.table(self.table).select("id").execute()
+            all_ids = [r['id'] for r in current.data]
+            if all_ids:
+                self.client.table(self.table).delete().in_("id", all_ids).execute()
+            self.client.table(self.table).insert(backup).execute()
+            self.set_last_update()
     
     def get_data(self, zoekterm: str = "") -> Optional[List[Dict[str, Any]]]:
         with self._handle_errors("ophalen data"):
@@ -63,31 +101,25 @@ class GlasVoorraadRepository:
     def insert_one(self, record: Dict[str, Any]):
         with self._handle_errors("rij toevoegen"):
             self.client.table(self.table).insert(record).execute()
+            self.set_last_update()
     
     def bulk_update_location(self, ids: List[int], nieuwe_locatie: str) -> bool:
         with self._handle_errors("locatie update"):
             self.client.table(self.table).update({"locatie": nieuwe_locatie}).in_("id", ids).execute()
+            self.set_last_update()
             return True
     
     def bulk_update_fields(self, updates: List[Dict[str, Any]]) -> bool:
         with self._handle_errors("velden update"):
             self.client.table(self.table).upsert(updates).execute()
+            self.set_last_update()
             return True
     
     def delete_many(self, ids: List[int]) -> bool:
         with self._handle_errors("verwijderen"):
             self.client.table(self.table).delete().in_("id", ids).execute()
+            self.set_last_update()
             return True
-
-    def restore_full_backup(self, backup: List[Dict[str, Any]]):
-        with self._handle_errors("backup herstellen"):
-            current = self.client.table(self.table).select("id").execute()
-            all_ids = [r['id'] for r in current.data]
-            if all_ids:
-                self.client.table(self.table).delete().in_("id", all_ids).execute()
-            if backup:
-                clean_backup = [{k: v for k, v in r.items() if k != 'Selecteren'} for r in backup]
-                self.client.table(self.table).insert(clean_backup).execute()
 
 # =============================================================================
 # 3. SERVICE LAAG
@@ -128,8 +160,10 @@ def render_styling(logo_b64: str):
         .header-left img {{ width: 60px; height: auto; }}
         .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; }}
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
-        div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
+        div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3em !important; width: 100%; }}
         div.stButton > button[key="logout_btn"] {{ background-color: #ff4b4b; color: white; }}
+        .update-info {{ font-size: 0.85rem; color: #666; text-align: center; margin-top: 10px; font-style: italic; }}
+        .selection-bar {{ display: flex; align-items: center; justify-content: space-between; background: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 10px; }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -149,7 +183,7 @@ def update_zoekterm():
 
 def wis_zoekopdracht():
     st.session_state.app_state.zoek_veld = ""
-    st.session_state["zoek_input"] = ""
+    st.session_state.zoek_input = ""
     st.session_state.app_state.current_page = 0
 
 def render_zoekbalk():
@@ -190,8 +224,7 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
             st.warning("Zeker?")
             cy, cn = st.columns(2)
             if cy.button("JA", use_container_width=True):
-                # BACKUP VOOR VERWIJDEREN
-                state.backup_data = service.repo.get_data()
+                service.repo.create_persistent_backup()
                 service.repo.delete_many(ids_to_act)
                 state.confirm_delete = False
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
@@ -203,8 +236,7 @@ def render_batch_acties(geselecteerd_df: pd.DataFrame, service: VoorraadService)
         st.divider()
         act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
         if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
-            # BACKUP VOOR VERPLAATSEN
-            state.backup_data = service.repo.get_data()
+            service.repo.create_persistent_backup()
             service.repo.bulk_update_location(ids_to_act, state.bulk_loc)
             state.show_location_grid = False
             state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
@@ -250,7 +282,8 @@ def main():
     render_header(logo_b64)
     zoekterm = render_zoekbalk()
     
-    # DATA LADEN & SELECTIES BEWAREN
+    state.last_update_time = service.repo.get_last_update()
+
     if state.mijn_data.empty or state.last_query != zoekterm:
         geselecteerde_ids = []
         if not state.mijn_data.empty and "Selecteren" in state.mijn_data.columns:
@@ -260,7 +293,6 @@ def main():
         if geselecteerde_ids:
             state.mijn_data.loc[state.mijn_data["id"].isin(geselecteerde_ids), "Selecteren"] = True
 
-    # SYNC EDITS (Tabel bewerkingen)
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         if edits:
@@ -277,22 +309,25 @@ def main():
                 if clean_changes:
                     db_updates.append({"id": int(row_id), **clean_changes})
             if db_updates:
-                # BACKUP VOOR TABEL BEWERKING
-                state.backup_data = service.repo.get_data()
+                service.repo.create_persistent_backup()
                 service.repo.bulk_update_fields(db_updates)
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
                 st.rerun()
 
+    # COMPACTE SELECTIEBALK
     geselecteerd_df = state.mijn_data[state.mijn_data["Selecteren"] == True]
     totaal_ruiten = int(geselecteerd_df["aantal"].sum()) if not geselecteerd_df.empty else 0
-    sel_suffix = f" ({totaal_ruiten})" if totaal_ruiten > 0 else ""
-
-    actie_houder = st.container()
-    c_sel1, c_sel2 = st.columns([1, 1])
-    if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
-        state.mijn_data["Selecteren"] = True; st.rerun()
-    if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True):
-        state.mijn_data["Selecteren"] = False; st.rerun()
+    
+    c_info, c_all, c_none = st.columns([5, 2, 2])
+    with c_info:
+        label = f"✨ **{totaal_ruiten}** ruiten geselecteerd" if totaal_ruiten > 0 else "Selecteer ruiten in de tabel"
+        st.markdown(f"<div style='padding-top: 10px;'>{label}</div>", unsafe_allow_html=True)
+    with c_all:
+        if st.button("✅ Alles selecteren", use_container_width=True):
+            state.mijn_data["Selecteren"] = True; st.rerun()
+    with c_none:
+        if st.button("⬜ Wissen", use_container_width=True):
+            state.mijn_data["Selecteren"] = False; st.rerun()
 
     ROWS_PER_PAGE = 25
     total_rows = len(state.mijn_data)
@@ -320,6 +355,8 @@ def main():
         if p3.button("VOLGENDE ➡️", use_container_width=True, disabled=state.current_page == num_pages - 1):
             state.current_page += 1; st.rerun()
 
+    # Batch actie knoppen verschijnen hier
+    actie_houder = st.container()
     with actie_houder: 
         if not geselecteerd_df.empty: render_batch_acties(geselecteerd_df, service)
 
@@ -343,8 +380,7 @@ def main():
             n_omschrijving = st.text_input("Omschrijving", placeholder="Type glas...")
             
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
-                # BACKUP VOOR HANDMATIG TOEVOEGEN
-                state.backup_data = service.repo.get_data()
+                service.repo.create_persistent_backup()
                 service.repo.insert_one({
                     "locatie": n_loc, "aantal": n_aantal, 
                     "breedte": n_breedte if n_breedte > 0 else None,
@@ -367,8 +403,7 @@ def main():
                     df_import = df_import.rename(columns={'order': 'order_nummer'})
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
-                # BACKUP VOOR BULK IMPORT
-                state.backup_data = service.repo.get_data()
+                service.repo.create_persistent_backup()
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
                 state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
@@ -376,14 +411,13 @@ def main():
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             st.cache_data.clear(); state.mijn_data = service.laad_voorraad_df(state.zoek_veld); st.rerun()
 
-    # UNDO KNOP
-    if state.backup_data:
-        st.divider()
-        if st.button("⏪ TERUGZETTEN NAAR VORIGE VERSIE (UNDO)", use_container_width=True):
-            service.repo.restore_full_backup(state.backup_data)
-            state.backup_data = None
-            state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
-            st.success("Versie hersteld!")
-            st.rerun()
+    st.divider()
+    if st.button("⏪ TERUGZETTEN NAAR VORIGE VERSIE (UNDO)", use_container_width=True):
+        service.repo.restore_full_backup()
+        state.mijn_data = service.laad_voorraad_df(state.zoek_veld)
+        st.success("Versie hersteld!")
+        st.rerun()
+    
+    st.markdown(f'<div class="update-info">Laatste database wijziging: {state.last_update_time}</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__": main()
