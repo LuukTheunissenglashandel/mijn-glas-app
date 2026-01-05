@@ -204,6 +204,7 @@ def render_main_interface(service):
     
     # 1. Zoeksectie
     c1, c2 = st.columns([7, 2])
+    # Gebruik de state.zoek_veld als value om wissen via rerun mogelijk te maken
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed", key="search_input")
     
     if zoek_val != state.zoek_veld:
@@ -213,9 +214,8 @@ def render_main_interface(service):
         
     if c2.button("WISSEN", use_container_width=True, key="clear_search"):
         state.zoek_veld = ""
-        if "search_input" in st.session_state:
-            st.session_state["search_input"] = ""
         state.current_page = 0
+        # Rerun forceert de widget om de 'value=""' van state.zoek_veld over te nemen
         st.rerun()
 
     # 2. Data laden
@@ -230,7 +230,7 @@ def render_main_interface(service):
     totaal_ruiten_geselecteerd = sum_on_page + sum_off_page
     sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
-    # 4. Actieknoppen boven de tabel (Container voor Meegenomen / Locatie Wijzigen)
+    # 4. Actieknoppen boven de tabel
     actie_houder = st.container()
     
     c_sel1, c_sel2 = st.columns([1, 1])
@@ -276,10 +276,9 @@ def render_main_interface(service):
         if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True, key="next_page"):
             state.current_page += 1; st.rerun()
 
-    # 7. Bulk acties (Meegenomen / Locatie Wijzigen)
+    # 7. Bulk acties
     if state.selected_ids:
         with actie_houder:
-            # Witruimte verkleind door markdown divider te verwijderen
             b1, b2 = st.columns(2)
             btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
             if b1.button(btn_text, use_container_width=True, key="toggle_loc"):
