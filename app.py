@@ -144,7 +144,7 @@ class VoorraadService:
             st.session_state.app_state.undo_stack.pop(0)
 
 # =============================================================================
-# 4. UI HELPER FUNCTIES
+# 4. UI HELPER FUNCTIES & CACHING
 # =============================================================================
 
 @st.cache_data
@@ -152,6 +152,11 @@ def get_base64_logo(img_path: str) -> str:
     if os.path.exists(img_path):
         with open(img_path, "rb") as f: return base64.b64encode(f.read()).decode()
     return ""
+
+@st.cache_data(ttl=300)
+def get_cached_sum(_repo, ids: tuple) -> int:
+    if not ids: return 0
+    return _repo.get_sum_aantal_for_ids(list(ids))
 
 def render_styling(logo_b64: str):
     st.markdown(f"""
@@ -205,7 +210,16 @@ def render_interactive_section(service):
 
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
-    totaal_ruiten_geselecteerd = service.repo.get_sum_aantal_for_ids(list(state.selected_ids))
+    # PERFORMANCE OPTIMALISATIE: Bereken de som lokaal voor de huidige pagina, 
+    # gebruik cache voor ID's buiten de huidige weergave.
+    current_ids = set(state.mijn_data['id'].tolist())
+    selected_on_page = state.selected_ids.intersection(current_ids)
+    selected_off_page = state.selected_ids.difference(current_ids)
+    
+    sum_on_page = state.mijn_data[state.mijn_data['id'].isin(selected_on_page)]['aantal'].fillna(0).astype(int).sum()
+    sum_off_page = get_cached_sum(service.repo, tuple(sorted(list(selected_off_page))))
+    
+    totaal_ruiten_geselecteerd = sum_on_page + sum_off_page
     sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
     actie_houder = st.container()
@@ -311,7 +325,7 @@ def main():
     # De interactieve sectie in een fragment voor performance
     render_interactive_section(service)
 
-    # Footer (buiten fragment omdat formulieren vaak een volledige refresh nodig hebben)
+    # Footer
     st.divider()
     footer_col1, footer_col2 = st.columns([1, 1])
     with footer_col1:
