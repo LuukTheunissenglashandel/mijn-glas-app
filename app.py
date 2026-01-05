@@ -61,7 +61,6 @@ class GlasVoorraadRepository:
         with self._handle_errors("ophalen data"):
             start = page * limit
             end = start + limit - 1
-            
             query = self.client.table(self.table).select("*", count="exact")
             if zoekterm:
                 search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
@@ -71,6 +70,7 @@ class GlasVoorraadRepository:
                 result = query.order("id").range(start, end).execute()
                 return result.data, result.count
             except Exception as e:
+                # Fix voor Error 416 (pagina buiten bereik)
                 if "416" in str(e) or "Range" in str(e):
                     result = query.order("id").range(0, limit - 1).execute()
                     return result.data, result.count
@@ -79,8 +79,7 @@ class GlasVoorraadRepository:
     def get_all_matching_ids(self, zoekterm: str = "") -> List[int]:
         query = self.client.table(self.table).select("id")
         if zoekterm:
-            search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
-            query = query.or_(search_filter)
+            query = query.or_(f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%")
         result = query.execute()
         return [r['id'] for r in result.data]
 
@@ -141,6 +140,10 @@ class VoorraadService:
 # 4. UI HELPER FUNCTIES & CACHING
 # =============================================================================
 
+@st.cache_resource
+def init_supabase() -> Client: 
+    return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
+
 @st.cache_data
 def get_base64_logo(img_path: str) -> str:
     if os.path.exists(img_path):
@@ -172,18 +175,16 @@ def render_header(logo_b64: str):
 
 def sync_selections():
     if "main_editor" in st.session_state:
-        edited_rows = st.session_state.main_editor.get("edited_rows", {})
+        edits = st.session_state.main_editor.get("edited_rows", {})
         df = st.session_state.app_state.mijn_data
-        for idx_str, changes in edited_rows.items():
+        for idx, changes in edits.items():
             if "Selecteren" in changes:
-                row_id = df.iloc[int(idx_str)]["id"]
-                if changes["Selecteren"]:
-                    st.session_state.app_state.selected_ids.add(row_id)
-                else:
-                    st.session_state.app_state.selected_ids.discard(row_id)
+                rid = df.iloc[int(idx)]["id"]
+                if changes["Selecteren"]: st.session_state.app_state.selected_ids.add(rid)
+                else: st.session_state.app_state.selected_ids.discard(rid)
 
 # =============================================================================
-# 5. GEOPTIMALISEERD INTERACTIEF BLOK (FRAGMENT)
+# 5. GEOPTIMALISEERD INTERACTIEF BLOK
 # =============================================================================
 
 @st.fragment
@@ -195,24 +196,21 @@ def render_main_interface(service):
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
     
     if zoek_val != state.zoek_veld:
-        state.zoek_veld = zoek_val; state.current_page = 0
-        st.rerun(scope="fragment") # Alleen fragment herladen, voorkomt flash in header
+        state.zoek_veld = zoek_val; state.current_page = 0; st.rerun(scope="fragment")
         
     if not state.zoek_veld:
-        if c2.button("ZOEKEN", use_container_width=True, key="search_main"): 
-            st.rerun(scope="fragment")
+        if c2.button("ZOEKEN", use_container_width=True, key="search_btn"): st.rerun(scope="fragment")
     else:
-        if c2.button("WISSEN", use_container_width=True, key="clear_main"):
-            state.zoek_veld = ""; state.current_page = 0
-            st.rerun(scope="fragment")
+        if c2.button("WISSEN", use_container_width=True, key="clear_btn"):
+            state.zoek_veld = ""; state.current_page = 0; st.rerun(scope="fragment")
 
-    # 2. Container voor actieknoppen
+    # 2. Actiehouder
     actie_houder = st.container()
 
     # 3. Data laden
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
-    # Som-berekening voor knoppen
+    # Som berekening
     curr_ids = set(state.mijn_data['id'].tolist())
     sel_on = state.selected_ids.intersection(curr_ids)
     sum_on = state.mijn_data[state.mijn_data['id'].isin(sel_on)]['aantal'].fillna(0).astype(int).sum()
@@ -227,47 +225,40 @@ def render_main_interface(service):
     totaal_sel = sum_on + sum_off
     suffix = f" ({totaal_sel})" if totaal_sel > 0 else ""
 
-    # 4. Actieknoppen Meegenomen / Locatie Wijzigen
+    # 4. Bulk Acties
     if state.selected_ids:
         with actie_houder:
             b1, b2 = st.columns(2)
             if b1.button("❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN", use_container_width=True):
-                state.show_location_grid = not state.show_location_grid
-                st.rerun(scope="fragment")
+                state.show_location_grid = not state.show_location_grid; st.rerun(scope="fragment")
             if b2.button(f"🗑️ MEEGENOMEN ({totaal_sel})", use_container_width=True):
                 service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
-                state.selected_ids.clear(); service.trigger_mutation()
-                st.rerun(scope="fragment")
+                state.selected_ids.clear(); service.trigger_mutation(); st.rerun(scope="fragment")
             
             if state.show_location_grid:
                 st.divider()
                 al1, al2, al3 = st.columns([2, 1, 1])
                 if al1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
                     service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
-                    service.trigger_mutation(); state.show_location_grid = False
-                    st.rerun(scope="fragment") # Voorkomt hapering bij verplaatsen
-                if al2.button("📍 Wijchen", use_container_width=True): 
-                    state.loc_prefix = "W"; st.rerun(scope="fragment")
-                if al3.button("📍 Boxmeer", use_container_width=True): 
-                    state.loc_prefix = "B"; st.rerun(scope="fragment")
+                    service.trigger_mutation(); state.show_location_grid = False; st.rerun(scope="fragment")
+                if al2.button("📍 Wijchen", use_container_width=True): state.loc_prefix = "W"; st.rerun(scope="fragment")
+                if al3.button("📍 Boxmeer", use_container_width=True): state.loc_prefix = "B"; st.rerun(scope="fragment")
                 
                 locs = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
                 cols = st.columns(5)
                 for i, loc in enumerate(locs):
                     with cols[i % 5]:
-                        if st.button(loc, key=f"lbtn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
+                        if st.button(loc, key=f"lb_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
                             state.bulk_loc = loc; st.rerun(scope="fragment")
 
-    # 5. Alles selecteren/deselecteren
+    # 5. Selectie knoppen
     cs1, cs2 = st.columns([1, 1])
     if cs1.button(f"✅ ALLES SELECTEREN{suffix}", use_container_width=True):
-        state.selected_ids.update(service.repo.get_all_matching_ids(state.zoek_veld))
-        st.rerun(scope="fragment")
+        state.selected_ids.update(service.repo.get_all_matching_ids(state.zoek_veld)); st.rerun(scope="fragment")
     if cs2.button(f"⬜ ALLES DESELECTEREN{suffix}", use_container_width=True):
-        state.selected_ids.clear()
-        st.rerun(scope="fragment")
+        state.selected_ids.clear(); st.rerun(scope="fragment")
 
-    # 6. De Tabel
+    # 6. Tabel
     st.data_editor(
         state.mijn_data,
         column_config={
@@ -280,6 +271,7 @@ def render_main_interface(service):
         on_change=sync_selections
     )
 
+    # Tabel updates verwerken
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         db_up = []
@@ -287,8 +279,7 @@ def render_main_interface(service):
             clean = {k: v for k, v in changes.items() if k != "Selecteren"}
             if clean: db_up.append({"id": int(state.mijn_data.iloc[int(idx)]["id"]), **clean})
         if db_up:
-            service.push_undo_state(); service.repo.bulk_update_fields(db_up)
-            service.trigger_mutation(); st.rerun(scope="fragment")
+            service.push_undo_state(); service.repo.bulk_update_fields(db_up); service.trigger_mutation(); st.rerun(scope="fragment")
 
     # 7. Paginering
     num_p = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
@@ -301,12 +292,8 @@ def render_main_interface(service):
             state.current_page += 1; st.rerun(scope="fragment")
 
 # =============================================================================
-# 6. APP EXECUTION
+# 6. MAIN EXECUTION
 # =============================================================================
-
-@st.cache_resource
-def init_supabase() -> Client: 
-    return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
 def main():
     if "app_state" not in st.session_state: 
@@ -327,10 +314,9 @@ def main():
                 else: st.error("Wachtwoord onjuist")
         st.stop()
     
+    # Gebruik cached resource voor client
     service = VoorraadService(GlasVoorraadRepository(init_supabase()))
     render_header(logo_b64)
-    
-    # De interface aanroepen - fragment zorgt voor rustige header
     render_main_interface(service)
 
     st.divider()
@@ -342,14 +328,11 @@ def main():
             f1a, f1b = st.columns(2)
             n_loc = f1a.selectbox("Locatie", options=LOCATIE_OPTIES)
             n_aant = f1b.number_input("Aantal", min_value=1, value=1)
-            f1c, f1d = st.columns(2)
-            n_br = f1c.number_input("Breedte (mm)", min_value=0, value=0)
-            n_ho = f1d.number_input("Hoogte (mm)", min_value=0, value=0)
             n_ord = st.text_input("Ordernummer")
             n_oms = st.text_input("Omschrijving")
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
                 service.push_undo_state()
-                service.repo.insert_one({"locatie": n_loc, "aantal": n_aant, "breedte": n_br if n_br > 0 else None, "hoogte": n_ho if n_ho > 0 else None, "order_nummer": n_ord.strip() or None, "omschrijving": n_oms.strip() or None})
+                service.repo.insert_one({"locatie": n_loc, "aantal": n_aant, "order_nummer": n_ord.strip() or None, "omschrijving": n_oms.strip() or None})
                 service.trigger_mutation(); state.success_msg = "Gelukt!"; st.rerun()
 
     with f2:
@@ -359,7 +342,6 @@ def main():
             try:
                 df = pd.read_excel(up)
                 df.columns = [str(c).lower().strip().replace(' ', '_') for c in df.columns]
-                if 'order' in df.columns: df = df.rename(columns={'order': 'order_nummer'})
                 service.push_undo_state(); service.repo.bulk_update_fields(df.to_dict('records'))
                 service.trigger_mutation(); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
@@ -369,7 +351,7 @@ def main():
         if state.undo_stack:
             ls = state.undo_stack[-1]
             if st.button(f"⏪ TERUGZETTEN ({ls['tijd']})", use_container_width=True):
-                all_ids = [r['id'] for r in service.repo.client.table("glas_voorraad").select("id").execute().data]
+                all_ids = [r['id'] for r in service.repo.get_all_for_backup()]
                 if all_ids: service.repo.delete_many(all_ids)
                 service.repo.client.table("glas_voorraad").insert([{k:v for k,v in r.items() if k != 'Selecteren'} for r in state.undo_stack.pop()['data']]).execute()
                 service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
