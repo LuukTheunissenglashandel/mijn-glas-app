@@ -162,19 +162,25 @@ def render_styling(logo_b64: str):
         .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
         #MainMenu, footer, header {{visibility: hidden;}}
         
+        /* Verbeterde header centrering en witruimte */
         .custom-header {{ 
             display: flex; 
             align-items: center; 
-            gap: 15px; 
+            gap: 15px;
+            margin-bottom: 30px; /* Meer witruimte onder de headerlijn */
         }}
         .custom-header img {{ 
-            height: 50px; 
-            width: auto; 
+            height: 55px; /* Iets groter logo voor balans */
+            width: auto;
+            display: block;
         }}
         .custom-header h1 {{ 
             margin: 0 !important; 
-            font-size: 1.8rem !important; 
+            padding: 0 !important;
+            font-size: 1.85rem !important; 
             font-weight: 700;
+            display: flex;
+            align-items: center;
         }}
         
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
@@ -182,14 +188,15 @@ def render_styling(logo_b64: str):
         [data-testid="stVerticalBlock"] {{ gap: 0.4rem !important; }}
         
         @media (max-width: 640px) {{
-            .custom-header h1 {{ font-size: 1.3rem !important; }}
-            .custom-header img {{ height: 40px; }}
+            .custom-header h1 {{ font-size: 1.4rem !important; }}
+            .custom-header img {{ height: 45px; }}
+            .custom-header {{ margin-bottom: 20px; }}
         }}
         </style>
     """, unsafe_allow_html=True)
 
 def render_header(logo_b64: str):
-    # Alles op één regel met verticale centrering
+    # Kolommen met vertical_alignment="center" zorgen dat de header en de knop op één lijn staan
     h1, h2 = st.columns([7, 2], vertical_alignment="center")
     with h1:
         st.markdown(f"""
