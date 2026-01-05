@@ -168,6 +168,8 @@ def render_styling(logo_b64: str):
         .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; }}
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
+        /* Verklein verticale witruimte tussen elementen */
+        [data-testid="stVerticalBlock"] {{ gap: 0.5rem !important; }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -203,15 +205,23 @@ def render_main_interface(service):
     # 1. Zoeksectie
     c1, c2 = st.columns([7, 2])
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed", key="search_input")
+    
     if zoek_val != state.zoek_veld:
-        state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
-    if c2.button("WISSEN", use_container_width=True, key="clear_search") and state.zoek_veld:
-        state.zoek_veld = ""; state.current_page = 0; st.rerun()
+        state.zoek_veld = zoek_val
+        state.current_page = 0
+        st.rerun()
+        
+    if c2.button("WISSEN", use_container_width=True, key="clear_search"):
+        state.zoek_veld = ""
+        if "search_input" in st.session_state:
+            st.session_state["search_input"] = ""
+        state.current_page = 0
+        st.rerun()
 
     # 2. Data laden
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
-    # 3. Slimme som-berekening (lokaal + cache)
+    # 3. Som-berekening
     current_ids = set(state.mijn_data['id'].tolist())
     selected_on_page = state.selected_ids.intersection(current_ids)
     selected_off_page = state.selected_ids.difference(current_ids)
@@ -220,8 +230,9 @@ def render_main_interface(service):
     totaal_ruiten_geselecteerd = sum_on_page + sum_off_page
     sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
-    # 4. Actieknoppen boven de tabel
+    # 4. Actieknoppen boven de tabel (Container voor Meegenomen / Locatie Wijzigen)
     actie_houder = st.container()
+    
     c_sel1, c_sel2 = st.columns([1, 1])
     if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True, key="sel_all"):
         all_ids = service.repo.get_all_matching_ids(state.zoek_veld)
@@ -244,7 +255,6 @@ def render_main_interface(service):
         on_change=sync_selections
     )
 
-    # Inline updates verwerken
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         db_updates = []
@@ -266,10 +276,10 @@ def render_main_interface(service):
         if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True, key="next_page"):
             state.current_page += 1; st.rerun()
 
-    # 7. Bulk acties (Meegenomen / Verplaatsen)
+    # 7. Bulk acties (Meegenomen / Locatie Wijzigen)
     if state.selected_ids:
         with actie_houder:
-            st.markdown("---")
+            # Witruimte verkleind door markdown divider te verwijderen
             b1, b2 = st.columns(2)
             btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
             if b1.button(btn_text, use_container_width=True, key="toggle_loc"):
@@ -325,10 +335,8 @@ def main():
     render_styling(logo_b64)
     render_header(logo_b64)
 
-    # Alles wat snel moet zijn zit nu in één fragment
     render_main_interface(service)
 
-    # Footer (zware systeemacties)
     st.divider()
     footer_col1, footer_col2 = st.columns([1, 1])
     with footer_col1:
