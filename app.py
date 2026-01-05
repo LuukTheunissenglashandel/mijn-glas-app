@@ -168,7 +168,6 @@ def render_styling(logo_b64: str):
         .header-left h1 {{ margin: 0; font-size: 1.8rem !important; font-weight: 700; }}
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
-        /* Verklein witruimte tussen blokken */
         [data-testid="stVerticalBlock"] {{ gap: 0.4rem !important; }}
         </style>
     """, unsafe_allow_html=True)
@@ -202,9 +201,9 @@ def sync_selections():
 def render_main_interface(service):
     state = st.session_state.app_state
     
-    # 1. Zoeksectie (Witruimte verkleind door gap-CSS en verwijderen van divider)
-    c1, c2 = st.columns([7, 2])
-    # Key verwijderd om conflicten bij het wissen te voorkomen
+    # 1. Zoeksectie met twee knoppen
+    c1, c2, c3 = st.columns([7, 1, 1])
+    # Key verwijderd om de 'StreamlitAPIException' bij het wissen te voorkomen
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
     
     if zoek_val != state.zoek_veld:
@@ -212,8 +211,11 @@ def render_main_interface(service):
         state.current_page = 0
         st.rerun()
         
-    if c2.button("ZOEKEN", use_container_width=True, key="search_trigger_btn"):
-        state.zoek_veld = zoek_val
+    if c2.button("ZOEKEN", use_container_width=True, key="btn_search"):
+        st.rerun()
+
+    if c3.button("WISSEN", use_container_width=True, key="btn_clear"):
+        state.zoek_veld = ""
         state.current_page = 0
         st.rerun()
 
@@ -275,7 +277,7 @@ def render_main_interface(service):
         if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True, key="next_page"):
             state.current_page += 1; st.rerun()
 
-    # 7. Bulk acties (Zichtbaar bij selectie)
+    # 7. Bulk acties
     if state.selected_ids:
         with actie_houder:
             b1, b2 = st.columns(2)
