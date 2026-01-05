@@ -201,23 +201,24 @@ def sync_selections():
 def render_main_interface(service):
     state = st.session_state.app_state
     
-    # 1. Zoeksectie met twee knoppen
-    c1, c2, c3 = st.columns([7, 1, 1])
-    # Key verwijderd om de 'StreamlitAPIException' bij het wissen te voorkomen
-    zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
+    # 1. Zoeksectie met dynamische knop (Wissen vervangt Zoeken)
+    c1, c2 = st.columns([7, 2])
+    zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek op ordernummer, omschrijving of locatie...", label_visibility="collapsed")
     
     if zoek_val != state.zoek_veld:
         state.zoek_veld = zoek_val
         state.current_page = 0
         st.rerun()
         
-    if c2.button("ZOEKEN", use_container_width=True, key="btn_search"):
-        st.rerun()
-
-    if c3.button("WISSEN", use_container_width=True, key="btn_clear"):
-        state.zoek_veld = ""
-        state.current_page = 0
-        st.rerun()
+    # Dynamische knopweergave
+    if not state.zoek_veld:
+        if c2.button("ZOEKEN", use_container_width=True, key="btn_search"):
+            st.rerun()
+    else:
+        if c2.button("WISSEN", use_container_width=True, key="btn_clear"):
+            state.zoek_veld = ""
+            state.current_page = 0
+            st.rerun()
 
     # 2. Data laden
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
