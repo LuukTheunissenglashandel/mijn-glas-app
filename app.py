@@ -215,6 +215,19 @@ def main():
         if c2.button("ZOEKEN", use_container_width=True):
             state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
 
+    # EERST selecties syncen uit vorige editor state
+    if "main_editor" in st.session_state:
+        edits = st.session_state.main_editor.get("edited_rows", {})
+        for idx_str, changes in edits.items():
+            if "Selecteren" in changes:
+                # Gebruik oude data om ID op te halen
+                if not state.mijn_data.empty and int(idx_str) < len(state.mijn_data):
+                    row_id = state.mijn_data.iloc[int(idx_str)]["id"]
+                    if changes["Selecteren"]:
+                        state.selected_ids.add(row_id)
+                    else:
+                        state.selected_ids.discard(row_id)
+
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
     totaal_ruiten_geselecteerd = service.repo.get_sum_aantal_for_ids(list(state.selected_ids))
@@ -268,19 +281,9 @@ def main():
         hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"]
     )
 
+    # Alleen database updates verwerken (selecties zijn al gesyncet)
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
-        
-        # Sync selecties
-        for idx_str, changes in edits.items():
-            if "Selecteren" in changes:
-                row_id = state.mijn_data.iloc[int(idx_str)]["id"]
-                if changes["Selecteren"]:
-                    state.selected_ids.add(row_id)
-                else:
-                    state.selected_ids.discard(row_id)
-        
-        # Database updates
         db_updates = []
         for idx_str, changes in edits.items():
             clean_changes = {k: v for k, v in changes.items() if k != "Selecteren"}
