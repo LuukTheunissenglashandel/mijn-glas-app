@@ -136,7 +136,6 @@ class VoorraadService:
 
     def push_undo_state(self):
         full_data = self.repo.get_all_for_backup()
-        # Sla tijdstip van aanpassing op
         nu = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
         st.session_state.app_state.undo_stack.append({"data": full_data, "tijd": nu})
         if len(st.session_state.app_state.undo_stack) > 10:
@@ -264,11 +263,12 @@ def main():
 
     num_pages = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_pages > 1:
-        p1, p2, p3 = st.columns([1, 2, 1])
-        if p1.button("⬅️ VORIGE", disabled=state.current_page == 0):
+        # Paginering buttons met verticale uitlijning verbeterd
+        p1, p2, p3 = st.columns([1, 2, 1], vertical_alignment="center")
+        if p1.button("⬅️ VORIGE", disabled=state.current_page == 0, use_container_width=True):
             state.current_page -= 1; st.rerun()
-        p2.markdown(f"<p style='text-align:center;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
-        if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1):
+        p2.markdown(f"<p style='text-align:center; margin:0;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
+        if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True):
             state.current_page += 1; st.rerun()
 
     if state.selected_ids:
@@ -339,7 +339,6 @@ def main():
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             service.trigger_mutation(); st.rerun()
         if state.undo_stack:
-            # Haal laatste aanpassing op
             laatste = state.undo_stack[-1]
             if st.button(f"⏪ TERUGZETTEN (Laatste aanpassing: {laatste['tijd']})", use_container_width=True):
                 state_to_restore = state.undo_stack.pop(); service.repo.restore_backup(state_to_restore['data'])
