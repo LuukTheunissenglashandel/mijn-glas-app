@@ -162,26 +162,19 @@ def render_styling(logo_b64: str):
         .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
         #MainMenu, footer, header {{visibility: hidden;}}
         
-        /* Verbeterde header uitlijning */
         .custom-header {{ 
             display: flex; 
             align-items: center; 
-            justify-content: flex-start; 
             gap: 15px; 
-            width: 100%;
-            padding: 5px 0;
         }}
         .custom-header img {{ 
             height: 50px; 
             width: auto; 
-            display: block;
         }}
         .custom-header h1 {{ 
             margin: 0 !important; 
-            padding: 0 !important;
             font-size: 1.8rem !important; 
             font-weight: 700;
-            line-height: 50px; /* Gelijk aan logo hoogte voor perfecte centrering */
         }}
         
         div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
@@ -191,22 +184,20 @@ def render_styling(logo_b64: str):
         @media (max-width: 640px) {{
             .custom-header h1 {{ font-size: 1.3rem !important; }}
             .custom-header img {{ height: 40px; }}
-            .custom-header h1 {{ line-height: 40px; }}
         }}
         </style>
     """, unsafe_allow_html=True)
 
 def render_header(logo_b64: str):
-    # Header container voor logo en titel
-    st.markdown(f"""
-        <div class="custom-header">
-            <img src="data:image/webp;base64,{logo_b64}">
-            <h1>Voorraad glas</h1>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # Logout knop in een aparte kolom rij voor interactie
-    _, h2 = st.columns([7, 2])
+    # Alles op één regel met verticale centrering
+    h1, h2 = st.columns([7, 2], vertical_alignment="center")
+    with h1:
+        st.markdown(f"""
+            <div class="custom-header">
+                <img src="data:image/webp;base64,{logo_b64}">
+                <h1>Voorraad glas</h1>
+            </div>
+        """, unsafe_allow_html=True)
     with h2:
         if st.button("🚪 UITLOGGEN", key="logout_btn", use_container_width=True):
             st.query_params.clear()
