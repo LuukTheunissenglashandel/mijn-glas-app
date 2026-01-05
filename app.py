@@ -31,6 +31,7 @@ class AppState:
     bulk_loc: str = "BK"
     zoek_veld: str = ""
     last_query: str = None
+    confirm_delete: bool = False # Vlag voor de delete-bevestiging
     show_location_grid: bool = False
     current_page: int = 0
     loc_prefix: str = "B"
@@ -133,7 +134,7 @@ class VoorraadService:
         st.cache_data.clear()
 
     def push_undo_state(self, affected_ids: List[int]):
-        """Slaat alleen de betrokken records op van de huidige gebruiker."""
+        """Slaat alleen de betrokken records op voor de huidige sessie."""
         records = self.repo.get_by_ids(affected_ids)
         if not records: return
         nu = datetime.now(AMSTERDAM_TZ).strftime("%H:%M:%S")
@@ -236,13 +237,25 @@ def render_main_interface(service):
             if b1.button("❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN", use_container_width=True):
                 state.show_location_grid = not state.show_location_grid; st.rerun(scope="fragment")
             
-            # Meegenomen sectie met checkbox controle
+            # --- MEEGENOMEN CONTROLE LOGICA ---
             with b2:
-                conf = st.checkbox("Weet je het zeker?", key="conf_meegenomen")
-                if st.button(f"🗑️ MEEGENOMEN ({totaal_sel})", use_container_width=True, disabled=not conf):
-                    service.push_undo_state(list(state.selected_ids))
-                    service.repo.delete_many(list(state.selected_ids))
-                    state.selected_ids.clear(); service.trigger_mutation(); st.rerun(scope="fragment")
+                if not state.confirm_delete:
+                    if st.button(f"🗑️ MEEGENOMEN ({totaal_sel})", use_container_width=True):
+                        state.confirm_delete = True
+                        st.rerun(scope="fragment")
+                else:
+                    st.write("**Weet je het zeker?**")
+                    c_ja, c_nee = st.columns(2)
+                    if c_ja.button("Ja", use_container_width=True, type="primary"):
+                        service.push_undo_state(list(state.selected_ids))
+                        service.repo.delete_many(list(state.selected_ids))
+                        state.selected_ids.clear()
+                        state.confirm_delete = False
+                        service.trigger_mutation()
+                        st.rerun(scope="fragment")
+                    if c_nee.button("Annuleer", use_container_width=True):
+                        state.confirm_delete = False
+                        st.rerun(scope="fragment")
             
             if state.show_location_grid:
                 st.divider()
@@ -368,14 +381,11 @@ def main():
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             service.trigger_mutation(); st.rerun()
         
-        # Verbeterde Undo Sectie
         if state.undo_stack:
             st.divider()
             ls = state.undo_stack[-1]
             st.write(f"Laatste actie om: **{ls['tijd']}**")
-            u_conf = st.checkbox("Weet je het zeker?", key="conf_undo")
-            if st.button(f"⏪ TERUGZETTEN", use_container_width=True, disabled=not u_conf):
-                # Gebruik upsert om alleen eigen wijzigingen te herstellen (multi-user safe)
+            if st.button(f"⏪ TERUGZETTEN", use_container_width=True):
                 undo_data = state.undo_stack.pop()["data"]
                 clean_undo = [{k:v for k,v in r.items() if k != 'Selecteren'} for r in undo_data]
                 service.repo.bulk_update_fields(clean_undo)
