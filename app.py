@@ -137,7 +137,6 @@ class VoorraadService:
 
     def push_undo_state(self):
         full_data = self.repo.get_all_for_backup()
-        # Tijdzone naar Amsterdam gezet met Pytz
         amsterdam_tz = pytz.timezone("Europe/Amsterdam")
         nu = datetime.now(amsterdam_tz).strftime("%d-%m-%Y %H:%M:%S")
         st.session_state.app_state.undo_stack.append({"data": full_data, "tijd": nu})
@@ -189,34 +188,13 @@ def sync_selections():
                     st.session_state.app_state.selected_ids.discard(row_id)
 
 # =============================================================================
-# 5. MAIN
+# 5. MAIN FRAGMENT (VOOR SNELLE INTERACTIE)
 # =============================================================================
 
-@st.cache_resource
-def init_supabase() -> Client: 
-    return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
-
-def main():
-    if "app_state" not in st.session_state: 
-        st.session_state.app_state = AppState(ingelogd=st.query_params.get("auth") == "true")
+@st.fragment
+def render_interactive_section(service):
     state = st.session_state.app_state
-
-    if not state.ingelogd:
-        _, col, _ = st.columns([1, 2, 1])
-        with col:
-            st.header("Inloggen")
-            pw_input = st.text_input("Wachtwoord", type="password")
-            if st.button("Inloggen", use_container_width=True):
-                if pw_input == WACHTWOORD:
-                    state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
-                else: st.error("Wachtwoord onjuist")
-        st.stop()
     
-    service = VoorraadService(GlasVoorraadRepository(init_supabase()))
-    logo_b64 = get_base64_logo("theunissen.webp")
-    render_styling(logo_b64)
-    render_header(logo_b64)
-
     # Zoekbalk
     c1, c2 = st.columns([7, 2])
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
@@ -266,7 +244,6 @@ def main():
 
     num_pages = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_pages > 1:
-        # Paginering buttons met verticale uitlijning verbeterd
         p1, p2, p3 = st.columns([1, 2, 1], vertical_alignment="center")
         if p1.button("⬅️ VORIGE", disabled=state.current_page == 0, use_container_width=True):
             state.current_page -= 1; st.rerun()
@@ -302,6 +279,39 @@ def main():
                         if st.button(loc, key=f"loc_btn_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
                             state.bulk_loc = loc; st.rerun()
 
+# =============================================================================
+# 6. APP EXECUTION
+# =============================================================================
+
+@st.cache_resource
+def init_supabase() -> Client: 
+    return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
+
+def main():
+    if "app_state" not in st.session_state: 
+        st.session_state.app_state = AppState(ingelogd=st.query_params.get("auth") == "true")
+    state = st.session_state.app_state
+
+    if not state.ingelogd:
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            st.header("Inloggen")
+            pw_input = st.text_input("Wachtwoord", type="password")
+            if st.button("Inloggen", use_container_width=True):
+                if pw_input == WACHTWOORD:
+                    state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
+                else: st.error("Wachtwoord onjuist")
+        st.stop()
+    
+    service = VoorraadService(GlasVoorraadRepository(init_supabase()))
+    logo_b64 = get_base64_logo("theunissen.webp")
+    render_styling(logo_b64)
+    render_header(logo_b64)
+
+    # De interactieve sectie in een fragment voor performance
+    render_interactive_section(service)
+
+    # Footer (buiten fragment omdat formulieren vaak een volledige refresh nodig hebben)
     st.divider()
     footer_col1, footer_col2 = st.columns([1, 1])
     with footer_col1:
