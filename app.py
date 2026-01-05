@@ -31,8 +31,6 @@ class AppState:
     bulk_loc: str = "BK"
     zoek_veld: str = ""
     last_query: str = None
-    confirm_delete: bool = False
-    confirm_undo: bool = False
     show_location_grid: bool = False
     current_page: int = 0
     loc_prefix: str = "B"
@@ -98,7 +96,7 @@ class GlasVoorraadRepository:
         return res.data
     
     def insert_one(self, record: Dict[str, Any]):
-        self.client.table(self.table).insert(record).execute()
+        return self.client.table(self.table).insert(record).execute()
     
     def bulk_update_location(self, ids: List[int], nieuwe_locatie: str):
         self.client.table(self.table).update({"locatie": nieuwe_locatie}).in_("id", ids).execute()
@@ -134,12 +132,12 @@ class VoorraadService:
     def trigger_mutation(self):
         st.cache_data.clear()
 
-    def push_undo_state(self, affected_ids: List[int], action: str = "update"):
-        """Slaat alleen de betrokken records op voor maximale efficiëntie."""
+    def push_undo_state(self, affected_ids: List[int]):
+        """Slaat alleen de betrokken records op van de huidige gebruiker."""
         records = self.repo.get_by_ids(affected_ids)
-        nu = datetime.now(AMSTERDAM_TZ).strftime("%d-%m-%Y %H:%M:%S")
+        if not records: return
+        nu = datetime.now(AMSTERDAM_TZ).strftime("%H:%M:%S")
         st.session_state.app_state.undo_stack.append({
-            "action": action,
             "data": records,
             "tijd": nu
         })
@@ -238,26 +236,19 @@ def render_main_interface(service):
             if b1.button("❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN", use_container_width=True):
                 state.show_location_grid = not state.show_location_grid; st.rerun(scope="fragment")
             
-            # --- MEEGENOMEN MET CONFIRMATION ---
-            if not state.confirm_delete:
-                if b2.button(f"🗑️ MEEGENOMEN ({totaal_sel})", use_container_width=True):
-                    state.confirm_delete = True; st.rerun(scope="fragment")
-            else:
-                with b2:
-                    bc1, bc2 = st.columns(2)
-                    if bc1.button("✅ JA", type="primary", use_container_width=True):
-                        service.push_undo_state(list(state.selected_ids), action="delete")
-                        service.repo.delete_many(list(state.selected_ids))
-                        state.selected_ids.clear(); state.confirm_delete = False
-                        service.trigger_mutation(); st.rerun(scope="fragment")
-                    if bc2.button("❌ NEE", use_container_width=True):
-                        state.confirm_delete = False; st.rerun(scope="fragment")
+            # Meegenomen sectie met checkbox controle
+            with b2:
+                conf = st.checkbox("Weet je het zeker?", key="conf_meegenomen")
+                if st.button(f"🗑️ MEEGENOMEN ({totaal_sel})", use_container_width=True, disabled=not conf):
+                    service.push_undo_state(list(state.selected_ids))
+                    service.repo.delete_many(list(state.selected_ids))
+                    state.selected_ids.clear(); service.trigger_mutation(); st.rerun(scope="fragment")
             
             if state.show_location_grid:
                 st.divider()
                 al1, al2, al3 = st.columns([2, 1, 1])
                 if al1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
-                    service.push_undo_state(list(state.selected_ids), action="update")
+                    service.push_undo_state(list(state.selected_ids))
                     service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
                     service.trigger_mutation(); state.show_location_grid = False; st.rerun(scope="fragment")
                 if al2.button("📍 Wijchen", use_container_width=True): state.loc_prefix = "W"; st.rerun(scope="fragment")
@@ -295,8 +286,7 @@ def render_main_interface(service):
             clean = {k: v for k, v in changes.items() if k != "Selecteren"}
             if clean: db_up.append({"id": int(state.mijn_data.iloc[int(idx)]["id"]), **clean})
         if db_up:
-            affected_ids = [item["id"] for item in db_up]
-            service.push_undo_state(affected_ids, action="update")
+            service.push_undo_state([r['id'] for r in db_up])
             service.repo.bulk_update_fields(db_up); service.trigger_mutation(); st.rerun(scope="fragment")
 
     num_p = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
@@ -350,7 +340,6 @@ def main():
             n_ord = st.text_input("Ordernummer")
             n_oms = st.text_input("Omschrijving")
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
-                # Voor toevoegen is undo simpelweg het nieuwe ID verwijderen (niet geïmplementeerd om code simpel te houden)
                 service.repo.insert_one({"locatie": n_loc, "aantal": n_aant, "breedte": n_br if n_br > 0 else None, "hoogte": n_ho if n_ho > 0 else None, "order_nummer": n_ord.strip() or None, "omschrijving": n_oms.strip() or None})
                 service.trigger_mutation(); state.success_msg = "Gelukt!"; st.rerun()
 
@@ -367,9 +356,10 @@ def main():
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
                 
-                # Bij bulk import doen we voor de veiligheid nog wel een full backup
-                full_data = service.repo.get_all_for_backup()
-                service.push_undo_state([r['id'] for r in full_data], action="restore_full")
+                # Undo voor bulk: sla huidige staat op
+                all_ids = [r['id'] for r in service.repo.get_all_for_backup()]
+                service.push_undo_state(all_ids)
+                
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
                 service.trigger_mutation()
                 st.rerun()
@@ -378,23 +368,17 @@ def main():
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
             service.trigger_mutation(); st.rerun()
         
-        # --- UNDO MET CONFIRMATION & EFFICIËNTIE ---
+        # Verbeterde Undo Sectie
         if state.undo_stack:
+            st.divider()
             ls = state.undo_stack[-1]
-            if not state.confirm_undo:
-                if st.button(f"⏪ TERUGZETTEN ({ls['tijd']})", use_container_width=True):
-                    state.confirm_undo = True; st.rerun()
-            else:
-                st.warning("Weet je zeker dat je de laatste wijziging ongedaan wilt maken?")
-                uc1, uc2 = st.columns(2)
-                if uc1.button("✅ JA, HERSTEL", type="primary", use_container_width=True):
-                    last_action = state.undo_stack.pop()
-                    # Efficiënt herstel: alleen de records in de stack terugzetten/upserten
-                    clean_data = [{k:v for k,v in r.items() if k != 'Selecteren'} for r in last_action['data']]
-                    service.repo.client.table("glas_voorraad").upsert(clean_data).execute()
-                    state.confirm_undo = False
-                    service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
-                if uc2.button("❌ ANNULEER", use_container_width=True):
-                    state.confirm_undo = False; st.rerun()
+            st.write(f"Laatste actie om: **{ls['tijd']}**")
+            u_conf = st.checkbox("Weet je het zeker?", key="conf_undo")
+            if st.button(f"⏪ TERUGZETTEN", use_container_width=True, disabled=not u_conf):
+                # Gebruik upsert om alleen eigen wijzigingen te herstellen (multi-user safe)
+                undo_data = state.undo_stack.pop()["data"]
+                clean_undo = [{k:v for k,v in r.items() if k != 'Selecteren'} for r in undo_data]
+                service.repo.bulk_update_fields(clean_undo)
+                service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
 
 if __name__ == "__main__": main()
