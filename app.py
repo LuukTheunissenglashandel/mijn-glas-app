@@ -33,7 +33,6 @@ class AppState:
     current_page: int = 0
     loc_prefix: str = "B"
     success_msg: str = ""
-    # Verbetering 4 & 5: Global selections en Undo stack
     selected_ids: set = field(default_factory=set)
     undo_stack: List[List[Dict[str, Any]]] = field(default_factory=list) 
     total_count: int = 0
@@ -55,23 +54,33 @@ class GlasVoorraadRepository:
             st.error(f"Database fout bij {operation}: {e}")
             raise
     
-    # Verbetering 2: Server-side paginatie & Verbetering 3: Cache-vriendelijke fetch
     def get_paged_data(self, zoekterm: str = "", page: int = 0, limit: int = 25) -> Tuple[List[Dict[str, Any]], int]:
         with self._handle_errors("ophalen data"):
             start = page * limit
             end = start + limit - 1
-            
             query = self.client.table(self.table).select("*", count="exact")
-            
             if zoekterm:
                 search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
                 query = query.or_(search_filter)
-            
             result = query.order("id").range(start, end).execute()
             return result.data, result.count
 
+    def get_all_matching_ids(self, zoekterm: str = "") -> List[int]:
+        """Haalt enkel de IDs op van alle matches voor 'Alles Selecteren'."""
+        query = self.client.table(self.table).select("id")
+        if zoekterm:
+            search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
+            query = query.or_(search_filter)
+        result = query.execute()
+        return [r['id'] for r in result.data]
+
+    def get_sum_aantal_for_ids(self, ids: List[int]) -> int:
+        """Berekent de som van 'aantal' voor een lijst IDs."""
+        if not ids: return 0
+        result = self.client.table(self.table).select("aantal").in_("id", ids).execute()
+        return sum(int(r['aantal'] or 0) for r in result.data)
+
     def get_all_for_backup(self) -> List[Dict[str, Any]]:
-        """Haalt volledige dataset op enkel voor de undo-stack bij mutaties."""
         res = self.client.table(self.table).select("*").execute()
         return res.data
     
@@ -93,18 +102,16 @@ class GlasVoorraadRepository:
 
     def restore_backup(self, backup_data: List[Dict[str, Any]]):
         with self._handle_errors("undo uitvoeren"):
-            # Veiligere methode: verwijder huidige en voeg backup in (eenvoudigste vorm van restore)
             current = self.client.table(self.table).select("id").execute()
             all_ids = [r['id'] for r in current.data]
             if all_ids:
                 self.client.table(self.table).delete().in_("id", all_ids).execute()
             if backup_data:
-                # Verwijder eventuele UI-kolommen
                 clean_data = [{k: v for k, v in r.items() if k != 'Selecteren'} for r in backup_data]
                 self.client.table(self.table).insert(clean_data).execute()
 
 # =============================================================================
-# 3. SERVICE LAAG (Met Caching)
+# 3. SERVICE LAAG
 # =============================================================================
 
 class VoorraadService:
@@ -112,34 +119,25 @@ class VoorraadService:
         self.repo = repo
 
     def laad_data(self, zoekterm: str, page: int) -> Tuple[pd.DataFrame, int]:
-        # Verbetering 3: Gebruik Streamlit caching voor de fetch
         @st.cache_data(ttl=600)
         def _cached_fetch(zoek: str, p: int):
             return self.repo.get_paged_data(zoek, p, ROWS_PER_PAGE)
         
         data, count = _cached_fetch(zoekterm, page)
-        
         kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
-        if not data:
-            return pd.DataFrame(columns=kolommen), 0
-            
+        if not data: return pd.DataFrame(columns=kolommen), 0
         df = pd.DataFrame(data)
-        # Verbetering 4: Map global selections naar de DataFrame
         df["Selecteren"] = df["id"].apply(lambda x: x in st.session_state.app_state.selected_ids)
-        
         for col in kolommen:
             if col not in df.columns: df[col] = None
         return df[kolommen], count
 
     def trigger_mutation(self):
-        """Maakt de cache leeg na een wijziging."""
         st.cache_data.clear()
 
     def push_undo_state(self):
-        """Verbetering 5: Voeg huidige staat toe aan undo stack voor wijziging."""
         full_data = self.repo.get_all_for_backup()
         st.session_state.app_state.undo_stack.append(full_data)
-        # Limiteer stack tot 10 om geheugen te sparen
         if len(st.session_state.app_state.undo_stack) > 10:
             st.session_state.app_state.undo_stack.pop(0)
 
@@ -176,7 +174,6 @@ def render_header(logo_b64: str):
             st.rerun()
 
 def sync_selections():
-    """Update de globale selectie-set op basis van de editor state."""
     if "main_editor" in st.session_state:
         edited_rows = st.session_state.main_editor.get("edited_rows", {})
         df = st.session_state.app_state.mijn_data
@@ -221,29 +218,30 @@ def main():
     c1, c2 = st.columns([7, 2])
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
     if zoek_val != state.zoek_veld:
-        state.zoek_veld = zoek_val
-        state.current_page = 0
-        st.rerun()
+        state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
     if c2.button("WISSEN", use_container_width=True) and state.zoek_veld:
         state.zoek_veld = ""; state.current_page = 0; st.rerun()
 
-    # Data laden
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
+    
+    # Bereken som van ruiten voor buttons (zoals het was)
+    totaal_ruiten_geselecteerd = service.repo.get_sum_aantal_for_ids(list(state.selected_ids))
+    sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
-    # Batch acties container
     actie_houder = st.container()
     
-    # Selectie knoppen
+    # Selectie knoppen (Verbeterd: Werkt op alle producten)
     c_sel1, c_sel2 = st.columns([1, 1])
-    if c_sel1.button("✅ ALLES SELECTEREN (HUIDIGE PAGINA)", use_container_width=True):
-        for rid in state.mijn_data["id"]: state.selected_ids.add(rid)
+    if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
+        all_ids = service.repo.get_all_matching_ids(state.zoek_veld)
+        state.selected_ids.update(all_ids)
         st.rerun()
-    if c_sel2.button("⬜ ALLES DESELECTEREN", use_container_width=True):
+    if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True):
         state.selected_ids.clear()
         st.rerun()
 
-    # Tabel met Verbetering 4: Selection Sync
-    edited_df = st.data_editor(
+    # Tabel
+    st.data_editor(
         state.mijn_data,
         column_config={
             "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"),
@@ -255,7 +253,7 @@ def main():
         on_change=sync_selections
     )
 
-    # Verwerk rij-bewerkingen (Inline updates)
+    # Bewerkingen opslaan
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         db_updates = []
@@ -264,51 +262,35 @@ def main():
             if clean_changes:
                 row_id = state.mijn_data.iloc[int(idx_str)]["id"]
                 db_updates.append({"id": int(row_id), **clean_changes})
-        
         if db_updates:
-            service.push_undo_state()
-            service.repo.bulk_update_fields(db_updates)
-            service.trigger_mutation()
-            st.rerun()
+            service.push_undo_state(); service.repo.bulk_update_fields(db_updates); service.trigger_mutation(); st.rerun()
 
-    # Paginering UI
+    # Paginering (Zonder record-count tekst)
     num_pages = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_pages > 1:
         p1, p2, p3 = st.columns([1, 2, 1])
         if p1.button("⬅️ VORIGE", disabled=state.current_page == 0):
             state.current_page -= 1; st.rerun()
-        p2.markdown(f"<p style='text-align:center;'>Pagina {state.current_page + 1} van {num_pages} ({state.total_count} records)</p>", unsafe_allow_html=True)
+        p2.markdown(f"<p style='text-align:center;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
         if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1):
             state.current_page += 1; st.rerun()
 
-    # Batch Acties (Locatie/Verwijderen)
-    selected_data = state.mijn_data[state.mijn_data["id"].isin(state.selected_ids)]
-    if not selected_data.empty:
+    # Batch acties (Zonder blauwe info balk)
+    if state.selected_ids:
         with actie_houder:
-            st.info(f"{len(state.selected_ids)} items geselecteerd over alle pagina's.")
             b1, b2 = st.columns(2)
             if b1.button("📍 LOCATIE WIJZIGEN", use_container_width=True):
-                state.show_location_grid = not state.show_location_grid
-                st.rerun()
-            
-            if b2.button(f"🗑️ MEEGENOMEN ({int(selected_data['aantal'].sum())})", use_container_width=True):
-                service.push_undo_state()
-                service.repo.delete_many(list(state.selected_ids))
-                state.selected_ids.clear()
-                service.trigger_mutation()
-                st.success("Items verwijderd"); st.rerun()
-
+                state.show_location_grid = not state.show_location_grid; st.rerun()
+            if b2.button(f"🗑️ MEEGENOMEN ({totaal_ruiten_geselecteerd})", use_container_width=True):
+                service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
+                state.selected_ids.clear(); service.trigger_mutation(); st.rerun()
             if state.show_location_grid:
-                # (Locatie grid logica blijft gelijk, maar roept service.trigger_mutation() aan)
                 loc = st.selectbox("Nieuwe locatie", LOCATIE_OPTIES, index=LOCATIE_OPTIES.index(state.bulk_loc))
                 if st.button(f"Bevestig verplaatsing naar {loc}", type="primary"):
-                    service.push_undo_state()
-                    service.repo.bulk_update_location(list(state.selected_ids), loc)
-                    service.trigger_mutation()
-                    state.show_location_grid = False
-                    st.rerun()
+                    service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), loc)
+                    service.trigger_mutation(); state.show_location_grid = False; st.rerun()
 
-    # Footer formulieren (Toevoegen / Import)
+    # Footer
     st.divider()
     f1, f2 = st.columns(2)
     with f1:
@@ -316,24 +298,17 @@ def main():
             st.subheader("➕ Toevoegen")
             n_order = st.text_input("Ordernummer")
             n_loc = st.selectbox("Locatie", LOCATIE_OPTIES)
+            n_aantal = st.number_input("Aantal", min_value=1, value=1)
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
-                service.push_undo_state()
-                service.repo.insert_one({"order_nummer": n_order, "locatie": n_loc, "aantal": 1})
-                service.trigger_mutation()
-                st.rerun()
-    
+                service.push_undo_state(); service.repo.insert_one({"order_nummer": n_order, "locatie": n_loc, "aantal": n_aantal})
+                service.trigger_mutation(); st.rerun()
     with f2:
         st.subheader("📥 Bulk")
         if st.button("🔄 DATA VERVERSEN", use_container_width=True):
             service.trigger_mutation(); st.rerun()
-        
-        # Undo knop met Stack
         if state.undo_stack:
-            if st.button(f"⏪ UNDO (Stack: {len(state.undo_stack)})", use_container_width=True, type="secondary"):
-                last_state = state.undo_stack.pop()
-                service.repo.restore_backup(last_state)
-                service.trigger_mutation()
-                st.success("Laatste actie ongedaan gemaakt!")
-                st.rerun()
+            if st.button(f"⏪ UNDO (Stack: {len(state.undo_stack)})", use_container_width=True):
+                last_state = state.undo_stack.pop(); service.repo.restore_backup(last_state)
+                service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
 
 if __name__ == "__main__": main()
