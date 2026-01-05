@@ -70,7 +70,6 @@ class GlasVoorraadRepository:
                 result = query.order("id").range(start, end).execute()
                 return result.data, result.count
             except Exception as e:
-                # Fix voor Error 416 (pagina buiten bereik)
                 if "416" in str(e) or "Range" in str(e):
                     result = query.order("id").range(0, limit - 1).execute()
                     return result.data, result.count
@@ -204,13 +203,10 @@ def render_main_interface(service):
         if c2.button("WISSEN", use_container_width=True, key="clear_btn"):
             state.zoek_veld = ""; state.current_page = 0; st.rerun(scope="fragment")
 
-    # 2. Actiehouder
     actie_houder = st.container()
 
-    # 3. Data laden
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
-    # Som berekening
     curr_ids = set(state.mijn_data['id'].tolist())
     sel_on = state.selected_ids.intersection(curr_ids)
     sum_on = state.mijn_data[state.mijn_data['id'].isin(sel_on)]['aantal'].fillna(0).astype(int).sum()
@@ -225,7 +221,6 @@ def render_main_interface(service):
     totaal_sel = sum_on + sum_off
     suffix = f" ({totaal_sel})" if totaal_sel > 0 else ""
 
-    # 4. Bulk Acties
     if state.selected_ids:
         with actie_houder:
             b1, b2 = st.columns(2)
@@ -251,14 +246,12 @@ def render_main_interface(service):
                         if st.button(loc, key=f"lb_{loc}", use_container_width=True, type="primary" if state.bulk_loc == loc else "secondary"):
                             state.bulk_loc = loc; st.rerun(scope="fragment")
 
-    # 5. Selectie knoppen
     cs1, cs2 = st.columns([1, 1])
     if cs1.button(f"✅ ALLES SELECTEREN{suffix}", use_container_width=True):
         state.selected_ids.update(service.repo.get_all_matching_ids(state.zoek_veld)); st.rerun(scope="fragment")
     if cs2.button(f"⬜ ALLES DESELECTEREN{suffix}", use_container_width=True):
         state.selected_ids.clear(); st.rerun(scope="fragment")
 
-    # 6. Tabel
     st.data_editor(
         state.mijn_data,
         column_config={
@@ -271,7 +264,6 @@ def render_main_interface(service):
         on_change=sync_selections
     )
 
-    # Tabel updates verwerken
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         db_up = []
@@ -281,7 +273,6 @@ def render_main_interface(service):
         if db_up:
             service.push_undo_state(); service.repo.bulk_update_fields(db_up); service.trigger_mutation(); st.rerun(scope="fragment")
 
-    # 7. Paginering
     num_p = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_p > 1:
         p1, p2, p3 = st.columns([1, 2, 1], vertical_alignment="center")
@@ -314,7 +305,6 @@ def main():
                 else: st.error("Wachtwoord onjuist")
         st.stop()
     
-    # Gebruik cached resource voor client
     service = VoorraadService(GlasVoorraadRepository(init_supabase()))
     render_header(logo_b64)
     render_main_interface(service)
@@ -328,11 +318,14 @@ def main():
             f1a, f1b = st.columns(2)
             n_loc = f1a.selectbox("Locatie", options=LOCATIE_OPTIES)
             n_aant = f1b.number_input("Aantal", min_value=1, value=1)
+            f1c, f1d = st.columns(2)
+            n_br = f1c.number_input("Breedte (mm)", min_value=0, value=0)
+            n_ho = f1d.number_input("Hoogte (mm)", min_value=0, value=0)
             n_ord = st.text_input("Ordernummer")
             n_oms = st.text_input("Omschrijving")
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
                 service.push_undo_state()
-                service.repo.insert_one({"locatie": n_loc, "aantal": n_aant, "order_nummer": n_ord.strip() or None, "omschrijving": n_oms.strip() or None})
+                service.repo.insert_one({"locatie": n_loc, "aantal": n_aant, "breedte": n_br if n_br > 0 else None, "hoogte": n_ho if n_ho > 0 else None, "order_nummer": n_ord.strip() or None, "omschrijving": n_oms.strip() or None})
                 service.trigger_mutation(); state.success_msg = "Gelukt!"; st.rerun()
 
     with f2:
@@ -340,10 +333,21 @@ def main():
         up = st.file_uploader("Bulk import Excel (.xlsx)", type=["xlsx"], label_visibility="collapsed")
         if up and st.button("🚀 IMPORT STARTEN", use_container_width=True):
             try:
-                df = pd.read_excel(up)
-                df.columns = [str(c).lower().strip().replace(' ', '_') for c in df.columns]
-                service.push_undo_state(); service.repo.bulk_update_fields(df.to_dict('records'))
-                service.trigger_mutation(); st.rerun()
+                df_import = pd.read_excel(up)
+                # Kolomnamen opschonen
+                df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
+                # 'order' hernoemen naar 'order_nummer' voor database compatibiliteit
+                if 'order' in df_import.columns: 
+                    df_import = df_import.rename(columns={'order': 'order_nummer'})
+                
+                # Alleen geldige database kolommen behouden
+                db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
+                final_import = df_import[[c for c in df_import.columns if c in db_cols]]
+                
+                service.push_undo_state()
+                service.repo.bulk_update_fields(final_import.to_dict('records'))
+                service.trigger_mutation()
+                st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
         
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
