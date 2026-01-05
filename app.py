@@ -193,44 +193,43 @@ def sync_selections():
                     st.session_state.app_state.selected_ids.discard(row_id)
 
 # =============================================================================
-# 5. MAIN FRAGMENT (VOOR SNELLE INTERACTIE)
+# 5. GEOPTIMALISEERD INTERACTIEF BLOK
 # =============================================================================
 
 @st.fragment
-def render_interactive_section(service):
+def render_main_interface(service):
     state = st.session_state.app_state
     
-    # Zoekbalk
+    # 1. Zoeksectie
     c1, c2 = st.columns([7, 2])
-    zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
+    zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed", key="search_input")
     if zoek_val != state.zoek_veld:
         state.zoek_veld = zoek_val; state.current_page = 0; st.rerun()
-    if c2.button("WISSEN", use_container_width=True) and state.zoek_veld:
+    if c2.button("WISSEN", use_container_width=True, key="clear_search") and state.zoek_veld:
         state.zoek_veld = ""; state.current_page = 0; st.rerun()
 
+    # 2. Data laden
     state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
-    # PERFORMANCE OPTIMALISATIE: Bereken de som lokaal voor de huidige pagina, 
-    # gebruik cache voor ID's buiten de huidige weergave.
+    # 3. Slimme som-berekening (lokaal + cache)
     current_ids = set(state.mijn_data['id'].tolist())
     selected_on_page = state.selected_ids.intersection(current_ids)
     selected_off_page = state.selected_ids.difference(current_ids)
-    
     sum_on_page = state.mijn_data[state.mijn_data['id'].isin(selected_on_page)]['aantal'].fillna(0).astype(int).sum()
     sum_off_page = get_cached_sum(service.repo, tuple(sorted(list(selected_off_page))))
-    
     totaal_ruiten_geselecteerd = sum_on_page + sum_off_page
     sel_suffix = f" ({totaal_ruiten_geselecteerd})" if totaal_ruiten_geselecteerd > 0 else ""
 
+    # 4. Actieknoppen boven de tabel
     actie_houder = st.container()
-    
     c_sel1, c_sel2 = st.columns([1, 1])
-    if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True):
+    if c_sel1.button(f"✅ ALLES SELECTEREN{sel_suffix}", use_container_width=True, key="sel_all"):
         all_ids = service.repo.get_all_matching_ids(state.zoek_veld)
         state.selected_ids.update(all_ids); st.rerun()
-    if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True):
+    if c_sel2.button(f"⬜ ALLES DESELECTEREN{sel_suffix}", use_container_width=True, key="desel_all"):
         state.selected_ids.clear(); st.rerun()
 
+    # 5. De Tabel
     st.data_editor(
         state.mijn_data,
         column_config={
@@ -245,6 +244,7 @@ def render_interactive_section(service):
         on_change=sync_selections
     )
 
+    # Inline updates verwerken
     if "main_editor" in st.session_state:
         edits = st.session_state.main_editor.get("edited_rows", {})
         db_updates = []
@@ -256,34 +256,37 @@ def render_interactive_section(service):
         if db_updates:
             service.push_undo_state(); service.repo.bulk_update_fields(db_updates); service.trigger_mutation(); st.rerun()
 
+    # 6. Paginering
     num_pages = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_pages > 1:
         p1, p2, p3 = st.columns([1, 2, 1], vertical_alignment="center")
-        if p1.button("⬅️ VORIGE", disabled=state.current_page == 0, use_container_width=True):
+        if p1.button("⬅️ VORIGE", disabled=state.current_page == 0, use_container_width=True, key="prev_page"):
             state.current_page -= 1; st.rerun()
         p2.markdown(f"<p style='text-align:center; margin:0;'>Pagina {state.current_page + 1} van {num_pages}</p>", unsafe_allow_html=True)
-        if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True):
+        if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_pages - 1, use_container_width=True, key="next_page"):
             state.current_page += 1; st.rerun()
 
+    # 7. Bulk acties (Meegenomen / Verplaatsen)
     if state.selected_ids:
         with actie_houder:
+            st.markdown("---")
             b1, b2 = st.columns(2)
             btn_text = "❌ SLUIT" if state.show_location_grid else "📍 LOCATIE WIJZIGEN"
-            if b1.button(btn_text, use_container_width=True):
+            if b1.button(btn_text, use_container_width=True, key="toggle_loc"):
                 state.show_location_grid = not state.show_location_grid; st.rerun()
-            if b2.button(f"🗑️ MEEGENOMEN ({totaal_ruiten_geselecteerd})", use_container_width=True):
+            if b2.button(f"🗑️ MEEGENOMEN ({totaal_ruiten_geselecteerd})", use_container_width=True, key="delete_sel"):
                 service.push_undo_state(); service.repo.delete_many(list(state.selected_ids))
                 state.selected_ids.clear(); service.trigger_mutation(); st.rerun()
             
             if state.show_location_grid:
                 st.divider()
                 act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
-                if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
+                if act_col1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True, key="bulk_move"):
                     service.push_undo_state(); service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
                     service.trigger_mutation(); state.show_location_grid = False; st.rerun()
-                if act_col2.button("📍 Wijchen", use_container_width=True):
+                if act_col2.button("📍 Wijchen", use_container_width=True, key="prefix_w"):
                     state.loc_prefix = "W"; st.rerun()
-                if act_col3.button("📍 Boxmeer", use_container_width=True):
+                if act_col3.button("📍 Boxmeer", use_container_width=True, key="prefix_b"):
                     state.loc_prefix = "B"; st.rerun()
                 
                 gefilterde_locaties = [l for l in LOCATIE_OPTIES if l.startswith(state.loc_prefix) or l == "BK"]
@@ -322,10 +325,10 @@ def main():
     render_styling(logo_b64)
     render_header(logo_b64)
 
-    # De interactieve sectie in een fragment voor performance
-    render_interactive_section(service)
+    # Alles wat snel moet zijn zit nu in één fragment
+    render_main_interface(service)
 
-    # Footer
+    # Footer (zware systeemacties)
     st.divider()
     footer_col1, footer_col2 = st.columns([1, 1])
     with footer_col1:
