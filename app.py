@@ -273,8 +273,8 @@ def render_main_interface(service):
                         service.repo.delete_many(list(state.selected_ids))
                         state.selected_ids.clear()
                         state.confirm_delete = False
-                        state.zoek_veld = ""    # Zoekopdracht wissen
-                        state.current_page = 0   # Terug naar pagina 1
+                        state.zoek_veld = ""
+                        state.current_page = 0
                         service.trigger_mutation()
                         st.rerun(scope="fragment")
                     if mj2.button("Annuleer", use_container_width=True):
@@ -387,6 +387,10 @@ def main():
                 df_import = pd.read_excel(up)
                 df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
                 if 'order' in df_import.columns: df_import = df_import.rename(columns={'order': 'order_nummer'})
+                
+                # Fix: Vervang alle NaN (lege cellen) door None zodat ze JSON compliant zijn
+                df_import = df_import.where(pd.notnull(df_import), None)
+                
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
                 all_ids = [r['id'] for r in service.repo.get_all_for_backup()]
