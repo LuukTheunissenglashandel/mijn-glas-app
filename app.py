@@ -8,6 +8,7 @@ import pytz
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field
 from contextlib import contextmanager
+import numpy as np
 
 # =============================================================================
 # 1. CONFIGURATIE & DATA CLASSES
@@ -384,15 +385,21 @@ def main():
         up = st.file_uploader("Bulk import Excel (.xlsx)", type=["xlsx"], label_visibility="collapsed")
         if up and st.button("🚀 IMPORT STARTEN", use_container_width=True):
             try:
+                # Inladen data
                 df_import = pd.read_excel(up)
-                df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
-                if 'order' in df_import.columns: df_import = df_import.rename(columns={'order': 'order_nummer'})
                 
-                # Fix: Vervang alle NaN (lege cellen) door None zodat ze JSON compliant zijn
-                df_import = df_import.where(pd.notnull(df_import), None)
+                # Kolomnamen opschonen
+                df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
+                if 'order' in df_import.columns: 
+                    df_import = df_import.rename(columns={'order': 'order_nummer'})
+                
+                # DE FIX: Forceer alles naar object en vervang NaN door None
+                # Dit voorkomt de 'nan is not JSON compliant' fout
+                df_import = df_import.astype(object).where(pd.notnull(df_import), None)
                 
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
+                
                 all_ids = [r['id'] for r in service.repo.get_all_for_backup()]
                 service.push_undo_state(all_ids)
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
