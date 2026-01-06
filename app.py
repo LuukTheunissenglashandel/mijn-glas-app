@@ -273,7 +273,8 @@ def render_main_interface(service):
                         service.repo.delete_many(list(state.selected_ids))
                         state.selected_ids.clear()
                         state.confirm_delete = False
-                        state.current_page = 0  # Terug naar pagina 1
+                        state.zoek_veld = ""    # Zoekopdracht wissen
+                        state.current_page = 0   # Terug naar pagina 1
                         service.trigger_mutation()
                         st.rerun(scope="fragment")
                     if mj2.button("Annuleer", use_container_width=True):
