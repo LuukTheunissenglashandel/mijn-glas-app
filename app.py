@@ -162,15 +162,14 @@ def render_styling(logo_b64: str):
         .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
         #MainMenu, footer, header {{visibility: hidden;}}
         
-        /* Verbeterde header centrering en witruimte */
         .custom-header {{ 
             display: flex; 
             align-items: center; 
             gap: 15px;
-            margin-bottom: 30px; /* Meer witruimte onder de headerlijn */
+            margin-bottom: 30px; 
         }}
         .custom-header img {{ 
-            height: 55px; /* Iets groter logo voor balans */
+            height: 55px; 
             width: auto;
             display: block;
         }}
@@ -196,7 +195,6 @@ def render_styling(logo_b64: str):
     """, unsafe_allow_html=True)
 
 def render_header(logo_b64: str):
-    # Kolommen met vertical_alignment="center" zorgen dat de header en de knop op één lijn staan
     h1, h2 = st.columns([7, 2], vertical_alignment="center")
     with h1:
         st.markdown(f"""
@@ -273,8 +271,11 @@ def render_main_interface(service):
                     if mj1.button("Ja", use_container_width=True, type="primary"):
                         service.push_undo_state(list(state.selected_ids))
                         service.repo.delete_many(list(state.selected_ids))
-                        state.selected_ids.clear(); state.confirm_delete = False
-                        service.trigger_mutation(); st.rerun(scope="fragment")
+                        state.selected_ids.clear()
+                        state.confirm_delete = False
+                        state.current_page = 0  # Terug naar pagina 1
+                        service.trigger_mutation()
+                        st.rerun(scope="fragment")
                     if mj2.button("Annuleer", use_container_width=True):
                         state.confirm_delete = False; st.rerun(scope="fragment")
             
