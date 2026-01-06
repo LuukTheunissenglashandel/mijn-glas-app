@@ -393,8 +393,13 @@ def main():
                 if 'order' in df_import.columns: 
                     df_import = df_import.rename(columns={'order': 'order_nummer'})
                 
-                # DE FIX: Forceer alles naar object en vervang NaN door None
-                # Dit voorkomt de 'nan is not JSON compliant' fout
+                # OPSCHONEN: Forceer numerieke kolommen en zet fouten (zoals '-') om naar leeg (None)
+                # Dit voorkomt de 'invalid input syntax for type integer: "-"' fout
+                for col in ['id', 'aantal', 'breedte', 'hoogte']:
+                    if col in df_import.columns:
+                        df_import[col] = pd.to_numeric(df_import[col], errors='coerce')
+                
+                # Forceer alles naar object en vervang NaN door None voor database compatibiliteit
                 df_import = df_import.astype(object).where(pd.notnull(df_import), None)
                 
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
