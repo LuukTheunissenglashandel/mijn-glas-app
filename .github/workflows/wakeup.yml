@@ -1,0 +1,10 @@
+name: Wake up App
+on:
+  schedule:
+    - cron: '0 5 * * *' # Dit is 05:00 UTC, wat 07:00 Amsterdam tijd is in de zomer (06:00 winter).
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping App
+        run: curl -I "theunissen.streamlit.app/?wake=true"
