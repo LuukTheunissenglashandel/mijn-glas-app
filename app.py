@@ -123,14 +123,16 @@ class GlasVoorraadRepository:
 
     def update_online_status(self, username: str):
         if not username: return
-        self.client.table("active_sessions").upsert({
-            "username": username,
-            "last_seen": datetime.now(pytz.utc).isoformat()
-        }).execute()
+        try:
+            self.client.table("active_sessions").upsert({
+                "username": username,
+                "last_seen": datetime.now(pytz.utc).isoformat()
+            }).execute()
+        except: pass
 
     def get_online_users(self) -> List[str]:
-        vijf_min_geleden = (datetime.now(pytz.utc) - pd.Timedelta(minutes=5)).isoformat()
         try:
+            vijf_min_geleden = (datetime.now(pytz.utc) - pd.Timedelta(minutes=5)).isoformat()
             res = self.client.table("active_sessions").select("username").gt("last_seen", vijf_min_geleden).execute()
             return [r['username'].split('@')[0].capitalize() for r in res.data]
         except: return []
@@ -185,10 +187,9 @@ def get_base64_logo(img_path: str) -> str:
 def render_styling(logo_b64: str):
     st.markdown(f"""
         <style>
-        /* Voorkomt verspringen tijdens laden/rerun */
-        .stApp {{ transition: opacity 0.2s ease-in-out; }}
-        .block-container {{ padding-top: 1rem; padding-bottom: 5rem; max-width: 100%; }}
+        .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
         #MainMenu, footer, header {{visibility: hidden;}}
+        .stApp {{ transition: opacity 0.2s ease-in-out; }}
         
         .custom-header {{ 
             display: flex; align-items: center; gap: 15px; margin-bottom: 30px; 
@@ -379,7 +380,7 @@ def main():
     logo_b64 = get_base64_logo("theunissen.webp")
     render_styling(logo_b64)
 
-    # LOGIN LOGICA MET STABIELE CONTAINER
+    # LOGIN LOGICA (Soepel & Autofill)
     login_placeholder = st.empty()
     
     if not state.ingelogd:
@@ -388,21 +389,22 @@ def main():
             with col:
                 st.header("Inloggen")
                 with st.form("login_form", clear_on_submit=False):
-                    u_in = st.text_input("Gebruikersnaam")
-                    p_in = st.text_input("Wachtwoord", type="password")
+                    u_in = st.text_input("Gebruikersnaam", autocomplete="username")
+                    p_in = st.text_input("Wachtwoord", type="password", autocomplete="current-password")
                     if st.form_submit_button("Inloggen", use_container_width=True):
-                        users = st.secrets.get("auth_users", {})
-                        if u_in in users and str(users[u_in]) == p_in:
-                            state.ingelogd = True
-                            state.gebruikersnaam = u_in
-                            st.query_params["auth"] = "true"
-                            service.repo.update_online_status(u_in)
-                            st.rerun()
-                        else:
-                            st.error("Inloggegevens onjuist")
+                        try:
+                            users = st.secrets.get("auth_users", {})
+                            if u_in in users and str(users[u_in]) == p_in:
+                                state.ingelogd = True
+                                state.gebruikersnaam = u_in
+                                st.query_params["auth"] = "true"
+                                service.repo.update_online_status(u_in)
+                                st.rerun()
+                            elif u_in:
+                                st.error("Inloggegevens onjuist")
+                        except: pass
         st.stop()
     
-    # Rest van de app laadt pas na inloggen
     render_header(logo_b64)
     render_main_interface(service)
 
