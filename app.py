@@ -11,6 +11,17 @@ from contextlib import contextmanager
 import numpy as np
 
 # =============================================================================
+# 0. WAKE-UP LOGIC (Nieuw)
+# =============================================================================
+def wake_up_app(service):
+    """Laadt de eerste set data in de cache om de app warm te draaien."""
+    try:
+        service.laad_data("", 0)
+        return True
+    except:
+        return False
+
+# =============================================================================
 # 1. CONFIGURATIE & DATA CLASSES
 # =============================================================================
 
@@ -340,6 +351,15 @@ def render_main_interface(service):
 # =============================================================================
 
 def main():
+    # Initialiseer service vroeg voor wake-up check
+    service = VoorraadService(GlasVoorraadRepository(init_supabase()))
+    
+    # Wake-up check: als de URL eindigt op ?wake=true, doe alleen een data-fetch en stop.
+    if st.query_params.get("wake") == "true":
+        wake_up_app(service)
+        st.write("App is wakker geschud.")
+        st.stop()
+
     if "app_state" not in st.session_state: 
         st.session_state.app_state = AppState(ingelogd=st.query_params.get("auth") == "true")
     state = st.session_state.app_state
@@ -358,7 +378,6 @@ def main():
                 else: st.error("Wachtwoord onjuist")
         st.stop()
     
-    service = VoorraadService(GlasVoorraadRepository(init_supabase()))
     render_header(logo_b64)
     render_main_interface(service)
 
@@ -385,26 +404,16 @@ def main():
         up = st.file_uploader("Bulk import Excel (.xlsx)", type=["xlsx"], label_visibility="collapsed")
         if up and st.button("🚀 IMPORT STARTEN", use_container_width=True):
             try:
-                # Inladen data
                 df_import = pd.read_excel(up)
-                
-                # Kolomnamen opschonen
                 df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
                 if 'order' in df_import.columns: 
                     df_import = df_import.rename(columns={'order': 'order_nummer'})
-                
-                # OPSCHONEN: Forceer numerieke kolommen en zet fouten (zoals '-') om naar leeg (None)
-                # Dit voorkomt de 'invalid input syntax for type integer: "-"' fout
                 for col in ['id', 'aantal', 'breedte', 'hoogte']:
                     if col in df_import.columns:
                         df_import[col] = pd.to_numeric(df_import[col], errors='coerce')
-                
-                # Forceer alles naar object en vervang NaN door None voor database compatibiliteit
                 df_import = df_import.astype(object).where(pd.notnull(df_import), None)
-                
                 db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
                 final_import = df_import[[c for c in df_import.columns if c in db_cols]]
-                
                 all_ids = [r['id'] for r in service.repo.get_all_for_backup()]
                 service.push_undo_state(all_ids)
                 service.repo.bulk_update_fields(final_import.to_dict('records'))
