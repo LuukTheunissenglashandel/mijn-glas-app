@@ -251,7 +251,10 @@ def render_main_interface(service):
             state.zoek_veld = ""; state.current_page = 0; st.rerun(scope="fragment")
 
     actie_houder = st.container()
-    state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
+    
+    # Best Practice: Gebruik spinner tijdens het laden van data om haperingen te voorkomen
+    with st.spinner("Laden..."):
+        state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
     curr_ids = set(state.mijn_data['id'].tolist())
     sel_on = state.selected_ids.intersection(curr_ids)
@@ -281,14 +284,15 @@ def render_main_interface(service):
                     st.write("**Weet je het zeker?**")
                     mj1, mj2 = st.columns(2)
                     if mj1.button("Ja", use_container_width=True, type="primary"):
-                        service.push_undo_state(list(state.selected_ids))
-                        service.repo.delete_many(list(state.selected_ids))
-                        state.selected_ids.clear()
-                        state.confirm_delete = False
-                        state.zoek_veld = ""
-                        state.current_page = 0
-                        service.trigger_mutation()
-                        st.rerun(scope="fragment")
+                        with st.spinner("Verwerken..."):
+                            service.push_undo_state(list(state.selected_ids))
+                            service.repo.delete_many(list(state.selected_ids))
+                            state.selected_ids.clear()
+                            state.confirm_delete = False
+                            state.zoek_veld = ""
+                            state.current_page = 0
+                            service.trigger_mutation()
+                            st.rerun(scope="fragment")
                     if mj2.button("Annuleer", use_container_width=True):
                         state.confirm_delete = False; st.rerun(scope="fragment")
             
@@ -296,9 +300,10 @@ def render_main_interface(service):
                 st.divider()
                 al1, al2, al3 = st.columns([2, 1, 1])
                 if al1.button(f"🚀 VERPLAATS NAAR {state.bulk_loc}", type="primary", use_container_width=True):
-                    service.push_undo_state(list(state.selected_ids))
-                    service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
-                    service.trigger_mutation(); state.show_location_grid = False; st.rerun(scope="fragment")
+                    with st.spinner("Verplaatsen..."):
+                        service.push_undo_state(list(state.selected_ids))
+                        service.repo.bulk_update_location(list(state.selected_ids), state.bulk_loc)
+                        service.trigger_mutation(); state.show_location_grid = False; st.rerun(scope="fragment")
                 if al2.button("📍 Wijchen", use_container_width=True): state.loc_prefix = "W"; st.rerun(scope="fragment")
                 if al3.button("📍 Boxmeer", use_container_width=True): state.loc_prefix = "B"; st.rerun(scope="fragment")
                 
@@ -334,8 +339,9 @@ def render_main_interface(service):
             clean = {k: v for k, v in changes.items() if k != "Selecteren"}
             if clean: db_up.append({"id": int(state.mijn_data.iloc[int(idx)]["id"]), **clean})
         if db_up:
-            service.push_undo_state([r['id'] for r in db_up])
-            service.repo.bulk_update_fields(db_up); service.trigger_mutation(); st.rerun(scope="fragment")
+            with st.spinner("Opslaan..."):
+                service.push_undo_state([r['id'] for r in db_up])
+                service.repo.bulk_update_fields(db_up); service.trigger_mutation(); st.rerun(scope="fragment")
 
     num_p = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
     if num_p > 1:
@@ -351,10 +357,8 @@ def render_main_interface(service):
 # =============================================================================
 
 def main():
-    # Initialiseer service vroeg voor wake-up check
     service = VoorraadService(GlasVoorraadRepository(init_supabase()))
     
-    # Wake-up check: als de URL eindigt op ?wake=true, doe alleen een data-fetch en stop.
     if st.query_params.get("wake") == "true":
         wake_up_app(service)
         st.write("App is wakker geschud.")
@@ -396,32 +400,35 @@ def main():
             n_ord = st.text_input("Ordernummer")
             n_oms = st.text_input("Omschrijving")
             if st.form_submit_button("TOEVOEGEN", use_container_width=True):
-                service.repo.insert_one({"locatie": n_loc, "aantal": n_aant, "breedte": n_br if n_br > 0 else None, "hoogte": n_ho if n_ho > 0 else None, "order_nummer": n_ord.strip() or None, "omschrijving": n_oms.strip() or None})
-                service.trigger_mutation(); state.success_msg = "Gelukt!"; st.rerun()
+                with st.spinner("Toevoegen..."):
+                    service.repo.insert_one({"locatie": n_loc, "aantal": n_aant, "breedte": n_br if n_br > 0 else None, "hoogte": n_ho if n_ho > 0 else None, "order_nummer": n_ord.strip() or None, "omschrijving": n_oms.strip() or None})
+                    service.trigger_mutation(); state.success_msg = "Gelukt!"; st.rerun()
 
     with f2:
         st.subheader("📥 Bulk & Systeem")
         up = st.file_uploader("Bulk import Excel (.xlsx)", type=["xlsx"], label_visibility="collapsed")
         if up and st.button("🚀 IMPORT STARTEN", use_container_width=True):
             try:
-                df_import = pd.read_excel(up)
-                df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
-                if 'order' in df_import.columns: 
-                    df_import = df_import.rename(columns={'order': 'order_nummer'})
-                for col in ['id', 'aantal', 'breedte', 'hoogte']:
-                    if col in df_import.columns:
-                        df_import[col] = pd.to_numeric(df_import[col], errors='coerce')
-                df_import = df_import.astype(object).where(pd.notnull(df_import), None)
-                db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
-                final_import = df_import[[c for c in df_import.columns if c in db_cols]]
-                all_ids = [r['id'] for r in service.repo.get_all_for_backup()]
-                service.push_undo_state(all_ids)
-                service.repo.bulk_update_fields(final_import.to_dict('records'))
-                service.trigger_mutation(); st.rerun()
+                with st.spinner("Importeren..."):
+                    df_import = pd.read_excel(up)
+                    df_import.columns = [str(c).lower().strip().replace(' ', '_') for c in df_import.columns]
+                    if 'order' in df_import.columns: 
+                        df_import = df_import.rename(columns={'order': 'order_nummer'})
+                    for col in ['id', 'aantal', 'breedte', 'hoogte']:
+                        if col in df_import.columns:
+                            df_import[col] = pd.to_numeric(df_import[col], errors='coerce')
+                    df_import = df_import.astype(object).where(pd.notnull(df_import), None)
+                    db_cols = ["id", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving"]
+                    final_import = df_import[[c for c in df_import.columns if c in db_cols]]
+                    all_ids = [r['id'] for r in service.repo.get_all_for_backup()]
+                    service.push_undo_state(all_ids)
+                    service.repo.bulk_update_fields(final_import.to_dict('records'))
+                    service.trigger_mutation(); st.rerun()
             except Exception as e: st.error(f"Fout: {e}")
         
         if st.button("🔄 DATA VOLLEDIG VERVERSEN", use_container_width=True):
-            service.trigger_mutation(); st.rerun()
+            with st.spinner("Verversen..."):
+                service.trigger_mutation(); st.rerun()
         
         if state.undo_stack:
             st.divider()
@@ -434,11 +441,12 @@ def main():
                 st.write("**Weet je het zeker? (Undo)**")
                 u1, u2 = st.columns(2)
                 if u1.button("Ja", use_container_width=True, type="primary", key="undo_yes"):
-                    undo_data = state.undo_stack.pop()["data"]
-                    clean_undo = [{k:v for k,v in r.items() if k != 'Selecteren'} for r in undo_data]
-                    service.repo.bulk_update_fields(clean_undo)
-                    state.confirm_undo = False
-                    service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
+                    with st.spinner("Herstellen..."):
+                        undo_data = state.undo_stack.pop()["data"]
+                        clean_undo = [{k:v for k,v in r.items() if k != 'Selecteren'} for r in undo_data]
+                        service.repo.bulk_update_fields(clean_undo)
+                        state.confirm_undo = False
+                        service.trigger_mutation(); st.success("Hersteld!"); st.rerun()
                 if u2.button("Annuleer", use_container_width=True, key="undo_no"):
                     state.confirm_undo = False; st.rerun()
 
