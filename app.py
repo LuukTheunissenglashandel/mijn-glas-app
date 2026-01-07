@@ -11,7 +11,7 @@ from contextlib import contextmanager
 import numpy as np
 
 # =============================================================================
-# 0. WAKE-UP LOGIC (Nieuw)
+# 0. WAKE-UP LOGIC
 # =============================================================================
 def wake_up_app(service):
     """Laadt de eerste set data in de cache om de app warm te draaien."""
@@ -27,7 +27,6 @@ def wake_up_app(service):
 
 st.set_page_config(layout="wide", page_title="Voorraad glas", page_icon="theunissen.webp")
 
-WACHTWOORD = st.secrets["auth"]["password"]
 LOCATIE_OPTIES = [
     "BK", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", 
     "B11", "B12", "B13", "B14", "B15", "B16", "B17", "B18", "B19", "B20", "W0",
@@ -39,6 +38,7 @@ AMSTERDAM_TZ = pytz.timezone("Europe/Amsterdam")
 @dataclass
 class AppState:
     ingelogd: bool = False
+    gebruikersnaam: str = "" # Nieuw: om bij te houden wie er kijkt
     mijn_data: pd.DataFrame = field(default_factory=pd.DataFrame)
     bulk_loc: str = "BK"
     zoek_veld: str = ""
@@ -120,6 +120,20 @@ class GlasVoorraadRepository:
     
     def delete_many(self, ids: List[int]):
         self.client.table(self.table).delete().in_("id", ids).execute()
+
+    # NIEUW: Functies voor online status
+    def update_online_status(self, username: str):
+        self.client.table("active_sessions").upsert({
+            "username": username,
+            "last_seen": datetime.now(pytz.utc).isoformat()
+        }).execute()
+
+    def get_online_users(self) -> List[str]:
+        # Haal mensen op die in de laatste 5 minuten actief waren
+        vijf_min_geleden = (datetime.now(pytz.utc) - pd.Timedelta(minutes=5)).isoformat()
+        res = self.client.table("active_sessions").select("username").gt("last_seen", vijf_min_geleden).execute()
+        # Toon alleen het eerste deel van de email (voor de @) en met hoofdletter
+        return [r['username'].split('@')[0].capitalize() for r in res.data]
 
 # =============================================================================
 # 3. SERVICE LAAG
@@ -238,6 +252,15 @@ def sync_selections():
 @st.fragment
 def render_main_interface(service):
     state = st.session_state.app_state
+    
+    # Update online status bij elke interactie
+    service.repo.update_online_status(state.gebruikersnaam)
+    
+    # Wie is er online?
+    mensen = service.repo.get_online_users()
+    if mensen:
+        st.caption(f"🟢 Nu online: {', '.join(mensen)}")
+
     c1, c2 = st.columns([7, 2])
     zoek_val = c1.text_input("Zoeken", value=state.zoek_veld, placeholder="🔍 Zoek...", label_visibility="collapsed")
     
@@ -252,7 +275,6 @@ def render_main_interface(service):
 
     actie_houder = st.container()
     
-    # Best Practice: Gebruik spinner tijdens het laden van data om haperingen te voorkomen
     with st.spinner("Laden..."):
         state.mijn_data, state.total_count = service.laad_data(state.zoek_veld, state.current_page)
     
@@ -375,11 +397,19 @@ def main():
         _, col, _ = st.columns([1, 2, 1])
         with col:
             st.header("Inloggen")
-            pw = st.text_input("Wachtwoord", type="password")
-            if st.button("Inloggen", use_container_width=True):
-                if pw == WACHTWOORD:
-                    state.ingelogd = True; st.query_params["auth"] = "true"; st.rerun()
-                else: st.error("Wachtwoord onjuist")
+            with st.form("login_form"):
+                u_in = st.text_input("Gebruikersnaam")
+                p_in = st.text_input("Wachtwoord", type="password")
+                if st.form_submit_button("Inloggen", use_container_width=True):
+                    users = st.secrets.get("auth_users", {})
+                    if u_in in users and str(users[u_in]) == p_in:
+                        state.ingelogd = True
+                        state.gebruikersnaam = u_in
+                        st.query_params["auth"] = "true"
+                        service.repo.update_online_status(u_in)
+                        st.rerun()
+                    else:
+                        st.error("Inloggegevens onjuist")
         st.stop()
     
     render_header(logo_b64)
