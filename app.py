@@ -38,7 +38,7 @@ AMSTERDAM_TZ = pytz.timezone("Europe/Amsterdam")
 @dataclass
 class AppState:
     ingelogd: bool = False
-    gebruikersnaam: str = "" # Nieuw: om bij te houden wie er kijkt
+    gebruikersnaam: str = "" 
     mijn_data: pd.DataFrame = field(default_factory=pd.DataFrame)
     bulk_loc: str = "BK"
     zoek_veld: str = ""
@@ -121,19 +121,19 @@ class GlasVoorraadRepository:
     def delete_many(self, ids: List[int]):
         self.client.table(self.table).delete().in_("id", ids).execute()
 
-    # NIEUW: Functies voor online status
     def update_online_status(self, username: str):
+        if not username: return
         self.client.table("active_sessions").upsert({
             "username": username,
             "last_seen": datetime.now(pytz.utc).isoformat()
         }).execute()
 
     def get_online_users(self) -> List[str]:
-        # Haal mensen op die in de laatste 5 minuten actief waren
         vijf_min_geleden = (datetime.now(pytz.utc) - pd.Timedelta(minutes=5)).isoformat()
-        res = self.client.table("active_sessions").select("username").gt("last_seen", vijf_min_geleden).execute()
-        # Toon alleen het eerste deel van de email (voor de @) en met hoofdletter
-        return [r['username'].split('@')[0].capitalize() for r in res.data]
+        try:
+            res = self.client.table("active_sessions").select("username").gt("last_seen", vijf_min_geleden).execute()
+            return [r['username'].split('@')[0].capitalize() for r in res.data]
+        except: return []
 
 # =============================================================================
 # 3. SERVICE LAAG
@@ -185,37 +185,26 @@ def get_base64_logo(img_path: str) -> str:
 def render_styling(logo_b64: str):
     st.markdown(f"""
         <style>
-        .block-container {{ padding-top: 1rem; padding-bottom: 5rem; }}
+        /* Voorkomt verspringen tijdens laden/rerun */
+        .stApp {{ transition: opacity 0.2s ease-in-out; }}
+        .block-container {{ padding-top: 1rem; padding-bottom: 5rem; max-width: 100%; }}
         #MainMenu, footer, header {{visibility: hidden;}}
         
         .custom-header {{ 
-            display: flex; 
-            align-items: center; 
-            gap: 15px;
-            margin-bottom: 30px; 
+            display: flex; align-items: center; gap: 15px; margin-bottom: 30px; 
         }}
-        .custom-header img {{ 
-            height: 55px; 
-            width: auto;
-            display: block;
-        }}
+        .custom-header img {{ height: 55px; width: auto; display: block; }}
         .custom-header h1 {{ 
-            margin: 0 !important; 
-            padding: 0 !important;
-            font-size: 1.85rem !important; 
-            font-weight: 700;
-            display: flex;
-            align-items: center;
+            margin: 0 !important; padding: 0 !important; font-size: 1.85rem !important; 
+            font-weight: 700; display: flex; align-items: center;
         }}
         
-        div[data-testid="stTextInput"] > div, div[data-testid="stTextInput"] div[data-baseweb="input"] {{ height: 3.5em !important; }}
+        div[data-testid="stTextInput"] > div {{ height: 3.5em !important; }}
         div.stButton > button {{ border-radius: 8px; font-weight: 600; height: 3.5em !important; width: 100%; }}
-        [data-testid="stVerticalBlock"] {{ gap: 0.4rem !important; }}
         
         @media (max-width: 640px) {{
             .custom-header h1 {{ font-size: 1.4rem !important; }}
             .custom-header img {{ height: 45px; }}
-            .custom-header {{ margin-bottom: 20px; }}
         }}
         </style>
     """, unsafe_allow_html=True)
@@ -252,11 +241,8 @@ def sync_selections():
 @st.fragment
 def render_main_interface(service):
     state = st.session_state.app_state
-    
-    # Update online status bij elke interactie
     service.repo.update_online_status(state.gebruikersnaam)
     
-    # Wie is er online?
     mensen = service.repo.get_online_users()
     if mensen:
         st.caption(f"🟢 Nu online: {', '.join(mensen)}")
@@ -393,25 +379,30 @@ def main():
     logo_b64 = get_base64_logo("theunissen.webp")
     render_styling(logo_b64)
 
+    # LOGIN LOGICA MET STABIELE CONTAINER
+    login_placeholder = st.empty()
+    
     if not state.ingelogd:
-        _, col, _ = st.columns([1, 2, 1])
-        with col:
-            st.header("Inloggen")
-            with st.form("login_form"):
-                u_in = st.text_input("Gebruikersnaam")
-                p_in = st.text_input("Wachtwoord", type="password")
-                if st.form_submit_button("Inloggen", use_container_width=True):
-                    users = st.secrets.get("auth_users", {})
-                    if u_in in users and str(users[u_in]) == p_in:
-                        state.ingelogd = True
-                        state.gebruikersnaam = u_in
-                        st.query_params["auth"] = "true"
-                        service.repo.update_online_status(u_in)
-                        st.rerun()
-                    else:
-                        st.error("Inloggegevens onjuist")
+        with login_placeholder.container():
+            _, col, _ = st.columns([1, 2, 1])
+            with col:
+                st.header("Inloggen")
+                with st.form("login_form", clear_on_submit=False):
+                    u_in = st.text_input("Gebruikersnaam")
+                    p_in = st.text_input("Wachtwoord", type="password")
+                    if st.form_submit_button("Inloggen", use_container_width=True):
+                        users = st.secrets.get("auth_users", {})
+                        if u_in in users and str(users[u_in]) == p_in:
+                            state.ingelogd = True
+                            state.gebruikersnaam = u_in
+                            st.query_params["auth"] = "true"
+                            service.repo.update_online_status(u_in)
+                            st.rerun()
+                        else:
+                            st.error("Inloggegevens onjuist")
         st.stop()
     
+    # Rest van de app laadt pas na inloggen
     render_header(logo_b64)
     render_main_interface(service)
 
