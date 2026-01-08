@@ -32,7 +32,6 @@ LOCATIE_OPTIES = [
     "B11", "B12", "B13", "B14", "B15", "B16", "B17", "B18", "B19", "B20", "W0",
     "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "W10"
 ]
-ROWS_PER_PAGE = 25
 AMSTERDAM_TZ = pytz.timezone("Europe/Amsterdam")
 
 @dataclass
@@ -70,23 +69,15 @@ class GlasVoorraadRepository:
             st.error(f"Database fout bij {operation}: {e}")
             raise
     
-    def get_paged_data(self, zoekterm: str = "", page: int = 0, limit: int = 25) -> Tuple[List[Dict[str, Any]], int]:
+    def get_all_data(self, zoekterm: str = "") -> Tuple[List[Dict[str, Any]], int]:
         with self._handle_errors("ophalen data"):
-            start = page * limit
-            end = start + limit - 1
             query = self.client.table(self.table).select("*", count="exact")
             if zoekterm:
                 search_filter = f"order_nummer.ilike.%{zoekterm}%,omschrijving.ilike.%{zoekterm}%,locatie.ilike.%{zoekterm}%"
                 query = query.or_(search_filter)
             
-            try:
-                result = query.order("id").range(start, end).execute()
-                return result.data, result.count
-            except Exception as e:
-                if "416" in str(e) or "Range" in str(e):
-                    result = query.order("id").range(0, limit - 1).execute()
-                    return result.data, result.count
-                raise e
+            result = query.order("id").execute()
+            return result.data, result.count
 
     def get_by_ids(self, ids: List[int]) -> List[Dict[str, Any]]:
         if not ids: return []
@@ -147,10 +138,10 @@ class VoorraadService:
 
     def laad_data(self, zoekterm: str, page: int) -> Tuple[pd.DataFrame, int]:
         @st.cache_data(ttl=600)
-        def _cached_fetch(zoek: str, p: int):
-            return self.repo.get_paged_data(zoek, p, ROWS_PER_PAGE)
+        def _cached_fetch(zoek: str):
+            return self.repo.get_all_data(zoek)
         
-        data, count = _cached_fetch(zoekterm, page)
+        data, count = _cached_fetch(zoekterm)
         kolommen = ["Selecteren", "locatie", "aantal", "breedte", "hoogte", "order_nummer", "omschrijving", "id"]
         if not data: return pd.DataFrame(columns=kolommen), 0
         df = pd.DataFrame(data)
@@ -334,10 +325,10 @@ def render_main_interface(service):
         column_config={
             "Selecteren": st.column_config.CheckboxColumn("Selecteer", width="small"),
             "id": None,
-            "locatie": st.column_config.SelectboxColumn("📍 Loc", options=LOCATIE_OPTIES, width="small"),
+            "locatie": st.column_config.TextColumn("📍 Loc", width="small"),
             "aantal": st.column_config.NumberColumn("Aant.", width="small")
         },
-        hide_index=True, use_container_width=True, key="main_editor", height=500, disabled=["id"],
+        hide_index=True, use_container_width=True, key="main_editor", height=600, disabled=["id"],
         on_change=sync_selections
     )
 
@@ -351,15 +342,6 @@ def render_main_interface(service):
             with st.spinner("Opslaan..."):
                 service.push_undo_state([r['id'] for r in db_up])
                 service.repo.bulk_update_fields(db_up); service.trigger_mutation(); st.rerun(scope="fragment")
-
-    num_p = max(1, (state.total_count - 1) // ROWS_PER_PAGE + 1)
-    if num_p > 1:
-        p1, p2, p3 = st.columns([1, 2, 1], vertical_alignment="center")
-        if p1.button("⬅️ VORIGE", disabled=state.current_page == 0, use_container_width=True):
-            state.current_page -= 1; st.rerun(scope="fragment")
-        p2.markdown(f"<p style='text-align:center; margin:0;'>Pagina {state.current_page + 1} van {num_p}</p>", unsafe_allow_html=True)
-        if p3.button("VOLGENDE ➡️", disabled=state.current_page == num_p - 1, use_container_width=True):
-            state.current_page += 1; st.rerun(scope="fragment")
 
 # =============================================================================
 # 6. MAIN EXECUTION
